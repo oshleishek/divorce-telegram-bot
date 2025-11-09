@@ -40,6 +40,14 @@ GOOGLE_SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Leads - Divorce Bot')
 def init_google_sheets():
     """Ініціалізація підключення до Google Sheets"""
     try:
+        # Перевіряємо чи є всі необхідні змінні
+        required_vars = ['GOOGLE_PROJECT_ID', 'GOOGLE_PRIVATE_KEY', 'GOOGLE_CLIENT_EMAIL']
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        
+        if missing_vars:
+            logger.warning(f"⚠️ Google Sheets не налаштовано (відсутні змінні: {', '.join(missing_vars)})")
+            return None
+        
         scope = ['https://spreadsheets.google.com/feeds',
                  'https://www.googleapis.com/auth/drive']
         
@@ -57,14 +65,21 @@ def init_google_sheets():
             "client_x509_cert_url": os.environ.get('GOOGLE_CERT_URL')
         }
         
+        logger.info("🔄 Підключення до Google Sheets...")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        
+        logger.info(f"🔄 Відкриваю таблицю '{GOOGLE_SHEET_NAME}'...")
         sheet = client.open(GOOGLE_SHEET_NAME).sheet1
         
         logger.info("✅ Google Sheets підключено успішно")
         return sheet
+        
+    except gspread.SpreadsheetNotFound:
+        logger.error(f"❌ Таблиця '{GOOGLE_SHEET_NAME}' не знайдена. Перевірте назву!")
+        return None
     except Exception as e:
-        logger.error(f"❌ Помилка підключення до Google Sheets: {e}")
+        logger.error(f"❌ Помилка підключення до Google Sheets: {type(e).__name__}: {str(e)}")
         return None
 
 # Ініціалізуємо sheets (або None якщо не налаштовано)
