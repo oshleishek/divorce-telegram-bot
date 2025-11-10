@@ -31,7 +31,7 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL', '')
 
 # Google Sheets налаштування
-GOOGLE_SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Leads - Divorce Bot')
+GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL')
 
 # =====================================================
 # ПІДКЛЮЧЕННЯ ДО GOOGLE SHEETS
@@ -41,7 +41,13 @@ def init_google_sheets():
     """Ініціалізація підключення до Google Sheets"""
     try:
         # Перевіряємо чи є всі необхідні змінні
-        required_vars = ['GOOGLE_PROJECT_ID', 'GOOGLE_PRIVATE_KEY', 'GOOGLE_CLIENT_EMAIL']
+        # --- ЗМІНЕНО: Додано GOOGLE_SHEET_URL до перевірки ---
+        required_vars = [
+            'GOOGLE_PROJECT_ID', 
+            'GOOGLE_PRIVATE_KEY', 
+            'GOOGLE_CLIENT_EMAIL',
+            'GOOGLE_SHEET_URL' # <-- ДОДАНО
+        ]
         missing_vars = [var for var in required_vars if not os.environ.get(var)]
         
         if missing_vars:
@@ -69,19 +75,20 @@ def init_google_sheets():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        logger.info(f"🔄 Відкриваю таблицю '{GOOGLE_SHEET_NAME}'...")
-        sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+        # --- ЗМІНЕНО: Відкриваємо по URL, а не по імені ---
+        logger.info(f"🔄 Відкриваю таблицю по URL...")
+        sheet = client.open_by_url(GOOGLE_SHEET_URL).sheet1
         
-        logger.info("✅ Google Sheets підключено успішно")
+        logger.info(f"✅ Google Sheets ({sheet.title}) підключено успішно")
         return sheet
         
     except gspread.SpreadsheetNotFound:
-        logger.error(f"❌ Таблиця '{GOOGLE_SHEET_NAME}' не знайдена. Перевірте назву!")
+        logger.error(f"❌ Таблиця за URL не знайдена. Перевірте URL та доступ (Share)!")
         return None
     except Exception as e:
         logger.error(f"❌ Помилка підключення до Google Sheets: {type(e).__name__}: {str(e)}")
         return None
-
+        
 # Ініціалізуємо sheets (або None якщо не налаштовано)
 SHEETS = init_google_sheets()
 
