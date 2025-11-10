@@ -12,6 +12,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
+from flask import Flask
+import threading
 
 # Налаштування логування
 logging.basicConfig(
@@ -91,6 +93,23 @@ def init_google_sheets():
         
 # Ініціалізуємо sheets (або None якщо не налаштовано)
 SHEETS = init_google_sheets()
+
+# =====================================================
+# WEB-СЕРВЕР ДЛЯ RENDER (ЩОБ НЕ ЗАСИНАВ)
+# =====================================================
+
+app = Flask(__name__)
+
+@app.route('/')
+def keep_alive():
+    """Відповідає на пінги, щоб сервіс не заснув"""
+    return "Я живий!"
+
+def run_web_server():
+    """Запускає веб-сервер в окремому потоці"""
+    # Render автоматично надає порт через $PORT, 10000 - це запасний
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
 
 # =====================================================
 # ЛОГІКА СЕГМЕНТАЦІЇ
@@ -675,6 +694,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Запуск бота"""
+
+    logger.info("🚀 Запускаю веб-сервер для Render...")
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.start()
+    # ------------------------
+
+    # Створюємо Application
+    application = Application.builder().token(BOT_TOKEN).build()
     
     # Створюємо Application
     application = Application.builder().token(BOT_TOKEN).build()
@@ -706,3 +733,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
