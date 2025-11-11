@@ -13,6 +13,7 @@ Telegram Bot для лідогенерації адвокатів (Розлуч�
 - ✅ Flask web-server для Render (щоб не засипав)
 """
 
+
 import os
 import logging
 from datetime import datetime
