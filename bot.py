@@ -797,20 +797,31 @@ async def phone_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     Відправляє нагадування, якщо користувач не поділився номером
     """
     job = context.job
-    user_id = job.user_id  # <-- Отримуємо ID, який ми передали
+    user_id = job.user_id
     
-    # --- ⭐ ГОЛОВНЕ ВИПРАВЛЕННЯ ТУТ ---
-    # Явно отримуємо user_data для цього конкретного юзера
+    logger.info(f"⏰ [JobQueue] ЗАВДАННЯ-НАГАДУВАННЯ СПРАЦЮВАЛО для user_id: {user_id}")
+
+    # Отримуємо user_data
     user_data = context.application.user_data.get(user_id)
+
+    if not user_data:
+        logger.warning(f"⏰ [JobQueue] Не вдалося знайти user_data для {user_id}. Можливо, бот перезапускався.")
+        # Навіть якщо даних немає, номера теж немає. Тож відправляємо.
     
-    # Перевіряємо, чи user_data існує, і чи є в ньому номер
-    if user_data and 'phone_number' in user_data:
-        logger.info(f"⏰ Нагадування для {user_id} скасовано (вже є номер)")
+    # Перевіряємо наявність номера
+    phone_exists = user_data and 'phone_number' in user_data
+    
+    # --- ДЕТАЛЬНІ ЛОГИ ---
+    logger.info(f"⏰ [JobQueue] Вміст user_data для {user_id}: {user_data}")
+    logger.info(f"⏰ [JobQueue] Перевірка: 'phone_number' існує? {phone_exists}")
+    # --- КІНЕЦЬ ЛОГІВ ---
+
+    if phone_exists:
+        logger.info(f"⏰ [JobQueue] Нагадування для {user_id} скасовано (вже є номер).")
         return # Користувач вже відповів, нічого не робимо
-    # --- ⭐ КІНЕЦЬ ВИПРАВЛЕННЯ ---
 
     # Якщо номера ще немає - відправляємо нагадування
-    logger.info(f"⏰ Відправляю нагадування про номер для {user_id}")
+    logger.info(f"⏰ [JobQueue] ВІДПРАВЛЯЮ нагадування про номер для {user_id}")
     
     # Створюємо кнопку знову
     from telegram import KeyboardButton, ReplyKeyboardMarkup
