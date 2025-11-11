@@ -593,7 +593,6 @@ async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         60,                       # Через скільки секунд
         chat_id=chat_id,          # ID чату
         user_id=user_id,          # ID юзера
-        data=user_id              # Передаємо ID юзера
     )
 
 async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -798,15 +797,20 @@ async def phone_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     Відправляє нагадування, якщо користувач не поділився номером
     """
     job = context.job
+    user_id = job.user_id  # <-- Отримуємо ID, який ми передали
     
-    # Перевіряємо, чи користувач вже поділився номером
-    # user_data прив'язується до user_id, який ми передали
-    if 'phone_number' in context.user_data:
-        logger.info(f"⏰ Нагадування для {job.user_id} скасовано (вже є номер)")
+    # --- ⭐ ГОЛОВНЕ ВИПРАВЛЕННЯ ТУТ ---
+    # Явно отримуємо user_data для цього конкретного юзера
+    user_data = context.application.user_data.get(user_id)
+    
+    # Перевіряємо, чи user_data існує, і чи є в ньому номер
+    if user_data and 'phone_number' in user_data:
+        logger.info(f"⏰ Нагадування для {user_id} скасовано (вже є номер)")
         return # Користувач вже відповів, нічого не робимо
+    # --- ⭐ КІНЕЦЬ ВИПРАВЛЕННЯ ---
 
     # Якщо номера ще немає - відправляємо нагадування
-    logger.info(f"⏰ Відправляю нагадування про номер для {job.user_id}")
+    logger.info(f"⏰ Відправляю нагадування про номер для {user_id}")
     
     # Створюємо кнопку знову
     from telegram import KeyboardButton, ReplyKeyboardMarkup
