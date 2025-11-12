@@ -844,7 +844,7 @@ async def remove_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int)
     if current_jobs:
         for job in current_jobs:
             job.schedule_removal()
-        logger.info(f"⏰ [JobQueue] Квіз завершено. Видаляю нагадування {job_name}")phone_reminder_callback
+        logger.info(f"⏰ [JobQueue] Квіз завершено. Видаляю нагадування {job_name}")
 
 async def phone_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     """
