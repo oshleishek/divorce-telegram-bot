@@ -402,6 +402,15 @@ TEXT_PHONE_REMINDER = """
 Це абсолютно безпечно і потрібно лише для того, щоб відправити вам результат.
 """
 
+# 📝 ТЕКСТ: Нагадування про незавершений квіз
+TEXT_QUIZ_REMINDER = """
+👋 Здається, ви відволіклися...
+
+Ми зупинилися на півдорозі до розрахунку вартості. Бажаєте продовжити?
+
+Просто натисніть /start, щоб почати заново (це швидко!), або дайте відповідь на останнє запитання, якщо воно ще на екрані.
+"""
+
 # =====================================================
 # ОБРОБНИКИ КОМАНД
 # =====================================================
@@ -410,6 +419,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробник команди /start - початок квізу"""
     
     user = update.effective_user
+
+    await remove_quiz_reminder(context, user.id)
     
     # Зберігаємо користувача в базу "All Users" (ВСІХ хто натиснув /start)
     await save_all_user(
@@ -461,6 +472,8 @@ async def question_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
 async def question_2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q2: Згода супруга"""
@@ -486,6 +499,8 @@ async def question_2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
 async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q3: Розділ майна"""
@@ -510,6 +525,8 @@ async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
 async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q4: Місце супруга"""
@@ -534,6 +551,8 @@ async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
 async def question_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q5: Терміновість"""
@@ -558,6 +577,8 @@ async def question_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
 async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q6: Запит номера телефону (останнє питання)"""
@@ -570,6 +591,8 @@ async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['urgency'] = query.data.replace('q5_', '')
     
     await log_event(user_id, username, "q5_answered", f"urgency={context.user_data['urgency']}")
+
+    await remove_quiz_reminder(context, user_id)
     
     from telegram import KeyboardButton, ReplyKeyboardMarkup
     
@@ -743,16 +766,6 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username
     
-    # 🎉 КОНФЕТІ! (Telegram reaction)
-    try:
-        await context.bot.set_message_reaction(
-            chat_id=query.message.chat_id,
-            message_id=query.message.message_id,
-            reaction=[ReactionTypeEmoji(emoji="🎉")]
-        )
-    except:
-        pass  # Якщо не вдалося - не критично
-    
     logger.info(f"🔥 ГАРЯЧИЙ ЛІД! {user_data.get('first_name')} хоче консультацію!")
     
     await log_event(user_id, username, "consultation_booked", "Клієнт записався на консультацію!")
@@ -791,6 +804,47 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка текстових повідомлень"""
     
     await update.message.reply_text(TEXT_UNKNOWN_MESSAGE)
+
+# =====================================================
+# ХЕЛПЕРИ ДЛЯ НАГАДУВАНЬ КВІЗУ
+# =====================================================
+
+def get_quiz_job_name(user_id: int) -> str:
+    """Повертає унікальне ім'я для задачі нагадування про квіз"""
+    return f"quiz_reminder_{user_id}"
+
+async def schedule_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int):
+    """
+    Планує нагадування про квіз через 15 хвилин.
+    Спочатку видаляє всі попередні нагадування для цього юзера.
+    """
+    job_name = get_quiz_job_name(user_id)
+    
+    # 1. Видаляємо старі задачі (якщо є)
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    if current_jobs:
+        for job in current_jobs:
+            job.schedule_removal()
+            logger.info(f"⏰ [JobQueue] Cкасовано старе нагадування {job_name}")
+
+    # 2. Ставимо нову задачу
+    context.job_queue.run_once(
+        quiz_reminder_callback,
+        900,  # 900 секунд = 15 хвилин. (Можеш змінити на 600 = 10 хв)
+        chat_id=chat_id,
+        user_id=user_id,
+        name=job_name
+    )
+    logger.info(f"⏰ [JobQueue] Заплановано нагадування {job_name} через 15 хв")
+
+async def remove_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Повністю видаляє нагадування про квіз (коли квіз завершено)"""
+    job_name = get_quiz_job_name(user_id)
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    if current_jobs:
+        for job in current_jobs:
+            job.schedule_removal()
+        logger.info(f"⏰ [JobQueue] Квіз завершено. Видаляю нагадування {job_name}")phone_reminder_callback
 
 async def phone_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -833,6 +887,27 @@ async def phone_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
         text=TEXT_PHONE_REMINDER, # Використовуємо новий текст
         parse_mode='HTML',
         reply_markup=reply_markup
+    )
+
+async def quiz_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Відправляє нагадування, якщо користувач "застряг" на квізі
+    """
+    job = context.job
+    user_id = job.user_id
+    
+    # Перевіряємо, чи юзер вже закінчив квіз (чи є в нього номер)
+    user_data = context.application.user_data.get(user_id, {})
+    if 'phone_number' in user_data:
+        logger.info(f"⏰ [JobQueue] Нагадування {job.name} скасовано (квіз вже пройдено)")
+        return
+
+    # Якщо квіз не пройдено - відправляємо нагадування
+    logger.info(f"⏰ [JobQueue] ВІДПРАВЛЯЮ нагадування про квіз для {user_id}")
+    await context.bot.send_message(
+        chat_id=job.chat_id,
+        text=TEXT_QUIZ_REMINDER,
+        parse_mode='HTML'
     )
 
 # =====================================================
