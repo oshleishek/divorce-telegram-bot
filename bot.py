@@ -24,6 +24,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from flask import Flask
 import threading
+import asyncio
+from telegram.constants import ChatAction
 
 # =====================================================
 # НАЛАШТУВАННЯ ЛОГУВАННЯ
@@ -411,6 +413,77 @@ TEXT_QUIZ_REMINDER = """
 Просто натисніть /start, щоб почати заново (це швидко!), або дайте відповідь на останнє запитання, якщо воно ще на екрані.
 """
 
+# ... (после TEXT_QUIZ_REMINDER) ...
+
+# 📝 ТЕКСТ: "Міні-кейси" для прогріву (після Q3)
+RELEVANCE_SNIPPETS = {
+    # Сценарій: "Найскладніший" (Діти + Незгода + Майно)
+    "complex_case": """
+Дякую. Бачу, у вас комбінація з трьох найскладніших факторів: діти, майно та відсутність згоди. 
+Це наш "класичний" випадок. Буквально минулого тижня ми допомогли клієнту в такій самій ситуації... (тут можна додати 1 речення успіху).
+""",
+    
+    # Сценарій: "Війна за дітей" (Діти + Незгода)
+    "kids_war": """
+Дякую. Розумію, коли є діти і немає згоди, головне — захистити їхні інтереси та визначити аліменти. 
+Ми часто ведемо такі справи, тут важливо діяти чітко за законом.
+""",
+    
+    # Сценарій: "Війна за майно" (Є спір про майно)
+    "property_war": """
+Ага, розділ майна. Це завжди нерви. Головне тут — не дати приховати активи і справедливо оцінити все, що було нажито. 
+У нас якраз був кейс, де ми допомогли... (1 речення успіху).
+""",
+    
+    # Сценарій: "Найпростіший" (Немає дітей + Є згода)
+    "simple_case": """
+Дякую. Бачу, у вас є згода і немає дітей — це чудово! 
+Це найшвидший варіант, такі справи ми закриваємо дуже оперативно.
+""",
+    
+    # Сценарій: "Загальний" (якщо нічого не підійшло)
+    "default": """
+Дякую за відповіді. Кожна ситуація унікальна, але у нас великий досвід. 
+Зараз уточню ще пару моментів...
+"""
+}
+
+# =====================================================
+# ЛОГІКА "МІНІ-КЕЙСІВ" (ПРОГРІВ)
+# =====================================================
+
+def get_relevance_snippet(user_data):
+    """
+    Аналізує відповіді Q1-Q3 та повертає релевантний "міні-кейс".
+    """
+    try:
+        has_children = user_data.get('has_children') == 'yes'
+        spouse_consent = user_data.get('spouse_consent') == 'yes'
+        property_dispute = user_data.get('property_dispute') == 'yes'
+
+        # Сценарій: "Найскладніший"
+        if has_children and not spouse_consent and property_dispute:
+            return RELEVANCE_SNIPPETS['complex_case']
+        
+        # Сценарій: "Війна за дітей"
+        if has_children and not spouse_consent:
+            return RELEVANCE_SNIPPETS['kids_war']
+        
+        # Сценарій: "Війна за майно"
+        if property_dispute:
+            return RELEVANCE_SNIPPETS['property_war']
+
+        # Сценарій: "Найпростіший"
+        if not has_children and spouse_consent:
+            return RELEVANCE_SNIPPETS['simple_case']
+
+        # Якщо нічого не підійшло, повертаємо загальний
+        return RELEVANCE_SNIPPETS['default']
+        
+    except Exception as e:
+        logger.error(f"❌ Помилка вибору міні-кейсу: {e}")
+        return None # Якщо щось пішло не так, краще промовчати
+
 # =====================================================
 # ОБРОБНИКИ КОМАНД
 # =====================================================
@@ -529,30 +602,69 @@ async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
 async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q4: Місце супруга"""
+    """
+    Q4: Місце супруга ( + ПРОГРІВ )
+    """
     query = update.callback_query
     await query.answer()
     
     user_id = update.effective_user.id
     username = update.effective_user.username
+    chat_id = query.message.chat_id # Нам знадобиться chat_id
     
+    # 1. Зберігаємо відповідь на Q3
     context.user_data['property_dispute'] = query.data.replace('q3_', '')
     
+    # 2. Логуємо подію
     await log_event(user_id, username, "q3_answered", f"property_dispute={context.user_data['property_dispute']}")
     
-    keyboard = [
+    # 3. Отримуємо релевантний "міні-кейс"
+    snippet_text = get_relevance_snippet(context.user_data)
+    
+    # 4. Створюємо клавіатуру для Q4
+    keyboard_q4 = [
         [InlineKeyboardButton("В Україні", callback_data='q4_ukraine')],
         [InlineKeyboardButton("За кордоном", callback_data='q4_abroad')],
         [InlineKeyboardButton("Не знаю адреси", callback_data='q4_unknown')]
     ]
+    reply_markup_q4 = InlineKeyboardMarkup(keyboard_q4)
+
+    # 5. Реалізуємо логіку з паузою
+    if snippet_text:
+        # 5а. Показуємо "міні-кейс" (редагуємо старе повідомлення)
+        await query.edit_message_text(
+            snippet_text,
+            parse_mode='HTML'
+        )
+        
+        # 5б. Імітуємо друк...
+        await context.bot.send_chat_action(
+            chat_id=chat_id,
+            action=ChatAction.TYPING
+        )
+        
+        # 5в. ... і чекаємо 5 секунд
+        await asyncio.sleep(5) 
+        
+        # 5г. Відправляємо Q4 НОВИМ повідомленням
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=TEXT_Q4,
+            parse_mode='HTML',
+            reply_markup=reply_markup_q4
+        )
+        
+    else:
+        # 6. (Якщо кейс не знайшовся) 
+        # Просто показуємо Q4, як і раніше
+        await query.edit_message_text(
+            TEXT_Q4,
+            parse_mode='HTML',
+            reply_markup=reply_markup_q4
+        )
     
-    await query.edit_message_text(
-        TEXT_Q4,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    
-    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
+    # 7. Плануємо нагадування (як і раніше)
+    await schedule_quiz_reminder(context, user_id, chat_id)
 
 async def question_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q5: Терміновість"""
