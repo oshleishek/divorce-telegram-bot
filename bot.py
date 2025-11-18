@@ -1156,11 +1156,13 @@ async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id=user_id,
     )
 
+# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ
 async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка номера телефону та завершення квізу"""
     
     contact = update.message.contact
     user = update.effective_user
+    chat_id = update.message.chat_id # <<< НОВЕ: Отримуємо chat_id
     
     # Отримуємо ім'я з contact
     first_name = contact.first_name or user.first_name or "Клієнт"
@@ -1191,7 +1193,7 @@ async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['segment_name'] = segment_name
     context.user_data['cost_estimate'] = cost
     context.user_data['time_estimate'] = time
-    context.user_data['status'] = 'new'
+    context.user_data['status'] = 'new' # <<< ВАЖЛИВО: Встановлюємо початковий статус
     
     logger.info(f"📊 Новий лід: {first_name} ({segment} - {segment_name})")
     
@@ -1224,6 +1226,19 @@ async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Відправляємо персоналізований оффер
     await send_first_offer(update, context, first_name)
+    
+    # <<< НОВЕ: ПЛАНУЄМО НАГАДУВАННЯ (Фіча #3)
+    # Через 2 години (7200 сек)
+    job_name = f"offer_reminder_{user_id}"
+    context.job_queue.run_once(
+        offer_reminder_callback,
+        7200, 
+        chat_id=chat_id,
+        user_id=user_id,
+        name=job_name,
+        data=first_name  # Передаємо ім'я в функцію
+    )
+    logger.info(f"⏰ Заплановано нагадування про оффер для {user_id} через 2 години")
 
 async def save_to_sheets(user_data):
     """Зберігає дані ліда в Google Sheets"""
@@ -1315,8 +1330,9 @@ async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, f
         reply_markup=reply_markup
     )
 
+# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ
 async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробка запису на консультацію (З КОНФЕТІ та бонусом)""" # <<< Оновив опис
+    """Обробка запису на консультацію (З КОНФЕТІ та бонусом)"""
     
     query = update.callback_query
     await query.answer()
@@ -1325,12 +1341,23 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username
     first_name = user_data.get('first_name', 'Клієнт')
+
+    # <<< НОВЕ: СКАСОВУЄМО НАГАДУВАННЯ (Фіча #3)
+    job_name = f"offer_reminder_{user_id}"
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    if current_jobs:
+        for job in current_jobs:
+            job.schedule_removal()
+        logger.info(f"⏰ Видалено нагадування про оффер для {user_id} (юзер записався)")
+    
+    # <<< НОВЕ: Оновлюємо статус в user_data (для логіки колбеку)
+    context.user_data['status'] = 'scheduled'
     
     logger.info(f"🔥 ГАРЯЧИЙ ЛІД! {first_name} хоче консультацію!")
     
     await log_event(user_id, username, "consultation_booked", "Запис на консультацію!")
     
-    # Оновлюємо статус
+    # Оновлюємо статус в All_Users
     if SHEETS_ALL_USERS:
         try:
             cell = SHEETS_ALL_USERS.find(str(user_id), in_column=2)
@@ -1368,7 +1395,7 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(text, parse_mode='HTML')
     
-    # <<< НОВЕ: Даємо миттєву цінність, поки клієнт чекає
+    # Даємо миттєву цінність, поки клієнт чекає
     await asyncio.sleep(1)
     await context.bot.send_message(
         chat_id=query.message.chat_id,
@@ -1388,7 +1415,7 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """,
         parse_mode='HTML'
     )
-    
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка текстових повідомлень"""
     await update.message.reply_text(TEXT_UNKNOWN_MESSAGE)
@@ -1469,6 +1496,45 @@ async def quiz_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=job.chat_id,
         text=TEXT_QUIZ_REMINDER,
+        parse_mode='HTML'
+    )
+
+# =====================================================
+# НОВА ФУНКЦІЯ: НАГАДУВАННЯ ПРО ОФФЕР
+# =====================================================
+
+async def offer_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
+    """Нагадування, якщо юзер отримав оффер, але не записався"""
+    job = context.job
+    user_id = job.user_id
+    chat_id = job.chat_id
+    first_name = job.data  # Отримуємо ім'я з 'data'
+
+    # Перевіряємо user_data, чи не записався вже юзер
+    # (Ми додамо 'status' в user_data у функції book_consultation)
+    user_data = context.application.user_data.get(user_id, {})
+    status = user_data.get('status', 'new')
+
+    if status == 'scheduled':
+        logger.info(f"⏰ Нагадування про оффер скасовано (статус 'scheduled') для {user_id}")
+        return
+
+    logger.info(f"⏰ ВІДПРАВЛЯЮ нагадування про оффер для {user_id}")
+    
+    # Текст із твого ж IMPLEMENTATION_CHECKLIST.md
+    text = f"""
+{first_name}, я бачу ви ще не записалися на консультацію.
+
+Можливо у вас виникли питання?
+
+Напишіть мені - я можу відповісти прямо зараз, 
+або допоможу записатися на зручний для вас час.
+"""
+    
+    # Відправляємо текст БЕЗ кнопки, щоб стимулювати відповідь
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
         parse_mode='HTML'
     )
 
