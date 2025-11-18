@@ -1004,6 +1004,7 @@ async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
+# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ
 async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q4: Місце супруга (З МІНІ-КЕЙСОМ ТА МІКРОКОМІТОМ)"""
     query = update.callback_query
@@ -1030,32 +1031,44 @@ async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отримуємо детальний мині-кейс
     mini_case = get_mini_case(context.user_data)
     
-    # Створюємо клавіатуру для Q4
+    # <<< НОВЕ: Спочатку відправляємо тільки мікро-комміт (редагуємо старе повідомлення)
+    await query.edit_message_text(
+        microcommit,
+        parse_mode='HTML'
+    )
+    
+    # <<< НОВЕ: Анонсуємо кейс (новим повідомленням)
+    await asyncio.sleep(1)
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="⏸ **Хвилинку...** Ваша ситуація дуже схожа на реальний випадок, який ми вели минулого місяця. Подивіться:",
+        parse_mode='HTML'
+    )
+    
+    # <<< НОВЕ: Імітуємо друк та відправляємо сам кейс (новим повідомленням)
+    await asyncio.sleep(1.5)
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=mini_case,
+        parse_mode='HTML'
+    )
+    
+    # <<< НОВЕ: Пауза, щоб дати час прочитати, та відправляємо Q4
+    await asyncio.sleep(4)
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
+    # Клавіатура для Q4 (з твого оригінального коду)
     keyboard_q4 = [
         [InlineKeyboardButton("🇺🇦 В Україні (знаю адресу)", callback_data='q4_ukraine')],
         [InlineKeyboardButton("✈️ За кордоном", callback_data='q4_abroad')],
         [InlineKeyboardButton("❓ Не знаю де / пропав/ла", callback_data='q4_unknown')]
     ]
     reply_markup_q4 = InlineKeyboardMarkup(keyboard_q4)
-    
-    # Показуємо мікрокоміт + міні-кейс
-    full_text = microcommit + mini_case
-    
-    await query.edit_message_text(
-        full_text,
-        parse_mode='HTML'
-    )
-    
-    # Імітуємо друк...
-    await context.bot.send_chat_action(
-        chat_id=chat_id,
-        action=ChatAction.TYPING
-    )
-    
-    # Чекаємо 3 секунди
-    await asyncio.sleep(3)
-    
-    # Відправляємо Q4 новим повідомленням
+
+    # Відправляємо Q4 (новим повідомленням)
     await context.bot.send_message(
         chat_id=chat_id,
         text=TEXT_Q4,
@@ -1285,6 +1298,21 @@ async def send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, segmen
         result_text,
         parse_mode='HTML'
     )
+    
+    # <<< НОВЕ: Додаємо візуальний елемент (план)
+    # ВАЖЛИВО: Заміни 'URL_YOUR_IMAGE_HERE.jpg' на реальне посилання на картинку
+    # Це може бути, наприклад, загальна схема "етапи розлучення"
+    try:
+        await update.message.reply_photo(
+            photo='https://i.imgur.com/g0tFfNq.png', # <<< ЗАМІНИТИ ЦЕЙ URL (або залиш цей плейсхолдер)
+            caption="<i>Приклад загальної блок-схеми процесу (для ілюстрації)</i>",
+            parse_mode='HTML'
+        )
+
+[Image of a divorce process flowchart]
+
+    except Exception as e:
+        logger.warning(f"Не вдалося відправити фото-ілюстрацію: {e}")
 
 async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, first_name):
     """Відправляє персоналізований оффер"""
@@ -1303,7 +1331,7 @@ async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, f
     )
 
 async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробка запису на консультацію (З КОНФЕТІ)"""
+    """Обробка запису на консультацію (З КОНФЕТІ та бонусом)""" # <<< Оновив опис
     
     query = update.callback_query
     await query.answer()
@@ -1354,7 +1382,28 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = get_consultation_booked_text(first_name, user_data.get('phone_number'))
     
     await query.edit_message_text(text, parse_mode='HTML')
+    
+    # <<< НОВЕ: Даємо миттєву цінність, поки клієнт чекає
+    await asyncio.sleep(1)
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=f"""
+💡 **{first_name}, поки ви очікуєте дзвінок** (це 5-10 хв), ось чек-лист '3 головні помилки при розлученні':
 
+<b>1. Емоційні рішення:</b> Починати ділити майно чи підписувати документи на емоціях. 
+<i>(Результат: втрата активів, про які 'забули').</i>
+
+<b>2. Усні домовленості:</b> Вірити обіцянкам про аліменти/майно 'на словах'. 
+<i>(Результат: через рік ніхто нічого не платить, довести неможливо).</i>
+
+<b>3. Затягування:</b> Думати, що 'все само вирішиться', і не фіксувати статус-кво. 
+<i>(Результат: супруг/а може вивести активи або набрати боргів, які стануть спільними).</i>
+
+Це допоможе вам підготуватися до розмови з адвокатом.
+""",
+        parse_mode='HTML'
+    )
+    
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка текстових повідомлень"""
     await update.message.reply_text(TEXT_UNKNOWN_MESSAGE)
