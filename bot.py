@@ -987,7 +987,7 @@ async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
-# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ
+# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ (тут виправлена HTML-помилка)
 async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q4: Місце супруга (З МІНІ-КЕЙСОМ ТА МІКРОКОМІТОМ)"""
     query = update.callback_query
@@ -1014,22 +1014,24 @@ async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отримуємо детальний мині-кейс
     mini_case = get_mini_case(context.user_data)
     
-    # <<< НОВЕ: Спочатку відправляємо тільки мікро-комміт (редагуємо старе повідомлення)
+    # Спочатку відправляємо тільки мікро-комміт (редагуємо старе повідомлення)
     await query.edit_message_text(
         microcommit,
         parse_mode='HTML'
     )
     
-    # <<< НОВЕ: Анонсуємо кейс (новим повідомленням)
+    # Анонсуємо кейс (новим повідомленням)
     await asyncio.sleep(1)
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    
+    # === ОСЬ ТУТ БУЛА ПОМИЛКА, ТЕПЕР ВИПРАВЛЕНО (<b>...</b>) ===
     await context.bot.send_message(
         chat_id=chat_id,
-        text="<b>Хвилинку...<b> Ваша ситуація дуже схожа на реальний випадок, який ми вели минулого місяця. Подивіться:",
+        text="⏸ <b>Хвилинку...</b> Ваша ситуація дуже схожа на реальний випадок, який ми вели минулого місяця. <b>Подивіться:</b>",
         parse_mode='HTML'
     )
     
-    # <<< НОВЕ: Імітуємо друк та відправляємо сам кейс (новим повідомленням)
+    # Імітуємо друк та відправляємо сам кейс (новим повідомленням)
     await asyncio.sleep(1.5)
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
     
@@ -1039,7 +1041,7 @@ async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML'
     )
     
-    # <<< НОВЕ: Пауза, щоб дати час прочитати, та відправляємо Q4
+    # Пауза, щоб дати час прочитати, та відправляємо Q4
     await asyncio.sleep(4)
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
