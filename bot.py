@@ -1220,7 +1220,7 @@ async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_result(update, context, segment, segment_name, cost, time)
     
     # Пауза перед оффером
-    await asyncio.sleep(1)
+    await asyncio.sleep(3)
     
     # Відправляємо персоналізований оффер
     await send_first_offer(update, context, first_name)
