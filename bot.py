@@ -1298,21 +1298,6 @@ async def send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, segmen
         result_text,
         parse_mode='HTML'
     )
-    
-    # <<< НОВЕ: Додаємо візуальний елемент (план)
-    # ВАЖЛИВО: Заміни 'URL_YOUR_IMAGE_HERE.jpg' на реальне посилання на картинку
-    # Це може бути, наприклад, загальна схема "етапи розлучення"
-    try:
-        await update.message.reply_photo(
-            photo='https://i.imgur.com/g0tFfNq.png', # <<< ЗАМІНИТИ ЦЕЙ URL (або залиш цей плейсхолдер)
-            caption="<i>Приклад загальної блок-схеми процесу (для ілюстрації)</i>",
-            parse_mode='HTML'
-        )
-
-[Image of a divorce process flowchart]
-
-    except Exception as e:
-        logger.warning(f"Не вдалося відправити фото-ілюстрацію: {e}")
 
 async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, first_name):
     """Відправляє персоналізований оффер"""
