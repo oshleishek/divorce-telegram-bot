@@ -1214,7 +1214,7 @@ async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(3)
     
     # Відправляємо персоналізований оффер
-    await send_first_offer(update, context, first_name)
+    await send_first_offer(update, context)
     
     # <<< НОВЕ: ПЛАНУЄМО НАГАДУВАННЯ (Фіча #3)
     # Через 2 години (7200 сек)
