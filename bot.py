@@ -1,6 +1,6 @@
 """
-Telegram Bot v4.0 "SCOOTER" (MVP)
-Логіка: Лінійна стріла (Квіз -> Хук -> Телефон -> Таблиця)
+Telegram Bot v4.1 "SMART SCOOTER" (MVP)
+Логіка: Квіз (4 питання) -> Хук -> Телефон -> Таблиця + Make + Лог всіх юзерів
 """
 
 import os
@@ -12,6 +12,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from flask import Flask
 import threading
+import requests  # Для Make.com
 
 # =====================================================
 # НАЛАШТУВАННЯ
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL')
+MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL') # Додай цей URL в змінні оточення!
 
 # =====================================================
 # ТЕКСТИ (УКРАЇНСЬКА)
@@ -30,19 +32,20 @@ GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL')
 TXT_WELCOME = """
 👋 <b>Калькулятор розлучення</b>
 
-Дайте відповідь на 3 прості питання, і я розрахую:
+Дайте відповідь на 4 прості питання, і я розрахую:
 1. Чи можна розлучитися без суду?
 2. Скільки це займе часу?
-3. Чи потрібна ваша присутність?
+3. Вартість процедури.
 
 <i>Це займе 30 секунд.</i>
 
 Натисніть кнопку нижче ⬇️
 """
 
-TXT_Q1 = "<b>Питання 1/3:</b>\n\nЧи є у вас спільні неповнолітні діти?"
-TXT_Q2 = "<b>Питання 2/3:</b>\n\nЧи є згода чоловіка/дружини на розлучення?"
-TXT_Q3 = "<b>Питання 3/3:</b>\n\nДе ви знаходитесь територіально?"
+TXT_Q1 = "<b>Питання 1/4:</b>\n\nЧи є у вас спільні неповнолітні діти?"
+TXT_Q2 = "<b>Питання 2/4:</b>\n\nЧи є згода чоловіка/дружини на розлучення?"
+TXT_Q3 = "<b>Питання 3/4:</b>\n\nЧи є спільне майно, яке потрібно ділити?" # НОВЕ
+TXT_Q4 = "<b>Питання 4/4:</b>\n\nДе ви знаходитесь територіально?"
 
 TXT_HOOK = """
 ✅ <b>Розрахунок готовий!</b>
@@ -53,20 +56,20 @@ TXT_HOOK = """
 
 Щоб отримати <b>покроковий план дій</b> та точний кошторис витрат — залиште свій номер.
 
-<i>Наш адвокат зв'яжеться з вами протягом 15 хвилин.</i>
+<i>Адвокат Анастасія зв'яжеться з вами протягом 15 хвилин.</i>
 """
 
 TXT_FINAL = """
 ✅ <b>Дякую! Вашу заявку прийнято.</b>
 
 Ми вже аналізуємо вашу ситуацію.
-Очікуйте дзвінок на номер <code>{phone}</code> найближчим часом.
+Очікуйте дзвінок з номера: <code>{phone}</code> найближчим часом.
 
 Гарного дня!
 """
 
 # =====================================================
-# GOOGLE SHEETS
+# GOOGLE SHEETS & MAKE
 # =====================================================
 
 def init_google_sheets():
@@ -87,22 +90,49 @@ def init_google_sheets():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_url(GOOGLE_SHEET_URL)
-        return spreadsheet.worksheet("Leads")
+        
+        # Повертаємо два листи: Ліди та Всі Юзери
+        # Переконайся, що в таблиці створені вкладки "Leads" та "All_Users"
+        return spreadsheet.worksheet("Leads"), spreadsheet.worksheet("All_Users")
     except Exception as e:
         logger.error(f"❌ Sheets Error: {e}")
-        return None
+        return None, None
 
-SHEET = init_google_sheets()
+SHEET_LEADS, SHEET_USERS = init_google_sheets()
+
+def send_to_make(data):
+    """Відправка даних на Make.com"""
+    if not MAKE_WEBHOOK_URL:
+        return
+    try:
+        requests.post(MAKE_WEBHOOK_URL, json=data)
+        logger.info("✅ Webhook sent to Make")
+    except Exception as e:
+        logger.error(f"❌ Make Error: {e}")
 
 # =====================================================
 # ЛОГІКА БОТА
 # =====================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Старт: Показує кнопку початку"""
+    """Старт: Логує юзера і показує кнопку"""
+    user = update.effective_user
     context.user_data.clear()
     
-    keyboard = [[InlineKeyboardButton("🚀 Розрахувати строки та вартість", callback_data='start_quiz')]]
+    # 1. Логуємо ВСІХ, хто натиснув старт (Для аналітики воронки)
+    if SHEET_USERS:
+        try:
+            SHEET_USERS.append_row([
+                datetime.now().strftime("%Y-%m-%d %H:%M"),
+                str(user.id),
+                f"@{user.username}" if user.username else "No Username",
+                user.first_name,
+                "Started"
+            ])
+        except Exception as e:
+            logger.error(f"Log User Error: {e}")
+
+    keyboard = [[InlineKeyboardButton("🚀 Розрахувати вартість", callback_data='start_quiz')]]
     await update.message.reply_text(TXT_WELCOME, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def quiz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,7 +141,7 @@ async def quiz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # Питання 1: Діти
+    # Q1: Діти
     if data == 'start_quiz':
         keyboard = [
             [InlineKeyboardButton("👶 Так, є діти", callback_data='q1_yes')],
@@ -119,7 +149,7 @@ async def quiz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(TXT_Q1, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Питання 2: Згода
+    # Q2: Згода
     elif data.startswith('q1_'):
         context.user_data['children'] = "Є діти" if data == 'q1_yes' else "Немає дітей"
         
@@ -129,25 +159,33 @@ async def quiz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(TXT_Q2, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Питання 3: Місце
+    # Q3: Майно (НОВЕ)
     elif data.startswith('q2_'):
         context.user_data['consent'] = "Є згода" if data == 'q2_yes' else "Немає згоди"
         
         keyboard = [
-            [InlineKeyboardButton("🇺🇦 В Україні", callback_data='q3_ukr')],
-            [InlineKeyboardButton("🌍 За кордоном", callback_data='q3_world')]
+            [InlineKeyboardButton("🏠 Так, ділимо майно", callback_data='q3_yes')],
+            [InlineKeyboardButton("❌ Ні, майна немає/домовились", callback_data='q3_no')]
         ]
         await query.edit_message_text(TXT_Q3, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # Фінал: Хук + Запит телефону
+    # Q4: Місце
     elif data.startswith('q3_'):
-        context.user_data['location'] = "Україна" if data == 'q3_ukr' else "За кордоном"
+        context.user_data['property'] = "Є майно" if data == 'q3_yes' else "Немає майна"
         
-        # Видаляємо старе повідомлення з кнопками, щоб було красиво
+        keyboard = [
+            [InlineKeyboardButton("🇺🇦 В Україні", callback_data='q4_ukr')],
+            [InlineKeyboardButton("🌍 За кордоном", callback_data='q4_world')]
+        ]
+        await query.edit_message_text(TXT_Q4, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    # Фінал: Хук + Запит телефону
+    elif data.startswith('q4_'):
+        context.user_data['location'] = "Україна" if data == 'q4_ukr' else "За кордоном"
+        
         await query.delete_message()
 
-        # Кнопка телефону (Reply Keyboard)
-        btn_phone = [[KeyboardButton("📱 Отримати план дій (Поділитися номером)", request_contact=True)]]
+        btn_phone = [[KeyboardButton("📱 Отримати план (Поділитися номером)", request_contact=True)]]
         markup = ReplyKeyboardMarkup(btn_phone, one_time_keyboard=True, resize_keyboard=True)
 
         await context.bot.send_message(
@@ -158,45 +196,44 @@ async def quiz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отримує контакт і зберігає в таблицю"""
+    """Отримує контакт, зберігає в таблицю і шле в Make"""
     contact = update.message.contact
     user = update.effective_user
     
     phone = contact.phone_number
     first_name = contact.first_name or user.first_name or "Клієнт"
     
-    # Дані з квізу
-    children = context.user_data.get('children', '-')
-    consent = context.user_data.get('consent', '-')
-    location = context.user_data.get('location', '-')
+    # Збираємо всі дані
+    lead_data = {
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "telegram_id": str(user.id),
+        "username": f"@{user.username}" if user.username else "",
+        "name": first_name,
+        "phone": phone,
+        "children": context.user_data.get('children', '-'),
+        "consent": context.user_data.get('consent', '-'),
+        "property": context.user_data.get('property', '-'), # НОВЕ
+        "location": context.user_data.get('location', '-')
+    }
 
-    # Збереження в Google Sheets
-    if SHEET:
+    # 1. Збереження в Google Sheets (Leads)
+    if SHEET_LEADS:
         try:
-            SHEET.append_row([
-                datetime.now().strftime("%Y-%m-%d %H:%M"),
-                str(user.id),
-                f"@{user.username}" if user.username else "",
-                first_name,
-                phone,
-                children,
-                consent,
-                location,
-                "New Lead"
-            ])
-            logger.info(f"✅ Лід збережено: {phone}")
+            SHEET_LEADS.append_row(list(lead_data.values()) + ["New Lead"])
+            logger.info(f"✅ Лід збережено в таблицю: {phone}")
         except Exception as e:
-            logger.error(f"❌ Помилка запису в таблицю: {e}")
+            logger.error(f"❌ Sheets Error: {e}")
 
-    # Фінальне повідомлення (прибираємо кнопку телефону)
+    # 2. Відправка в Make (для миттєвого повідомлення)
+    if MAKE_WEBHOOK_URL:
+        threading.Thread(target=send_to_make, args=(lead_data,)).start()
+
+    # Фінальне повідомлення
     await update.message.reply_text(
         TXT_FINAL.format(phone=phone),
         parse_mode='HTML',
         reply_markup=ReplyKeyboardRemove()
     )
-
-    # Оповіщення тобі (опціонально, розкоментуй і встав свій ID, якщо хочеш бачити ліди в ПП)
-    # await context.bot.send_message(chat_id=YOUR_ADMIN_ID, text=f"🔥 НОВИЙ ЛІД!\n{phone}\n{children}, {consent}")
 
 # =====================================================
 # SERVER & MAIN
@@ -204,18 +241,17 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 app = Flask(__name__)
 @app.route('/')
-def index(): return "Bot is running", 200
+def index(): return "Bot v4.1 is running", 200
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(quiz_handler)) # Один хендлер на всі кнопки
+    application.add_handler(CallbackQueryHandler(quiz_handler))
     application.add_handler(MessageHandler(filters.CONTACT, contact_handler))
 
     application.run_polling()
