@@ -89,9 +89,29 @@ def init_google_sheets():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_url(GOOGLE_SHEET_URL)
-        return spreadsheet.worksheet("Leads"), spreadsheet.worksheet("All_Users")
+        
+        # --- ЛОГИКА САМОИСЦЕЛЕНИЯ ---
+        
+        # 1. Получаем или создаем Leads
+        try:
+            sheet_leads = spreadsheet.worksheet("Leads")
+        except gspread.WorksheetNotFound:
+            logger.info("⚠️ Вкладка 'Leads' не знайдена. Створюю нову...")
+            sheet_leads = spreadsheet.add_worksheet(title="Leads", rows=1000, cols=10)
+            sheet_leads.append_row(["Дата", "ID", "Username", "Ім'я", "Телефон", "Діти", "Згода", "Майно", "Місце", "Статус"])
+
+        # 2. Получаем или создаем All_Users
+        try:
+            sheet_users = spreadsheet.worksheet("All_Users")
+        except gspread.WorksheetNotFound:
+            logger.info("⚠️ Вкладка 'All_Users' не знайдена. Створюю нову...")
+            sheet_users = spreadsheet.add_worksheet(title="All_Users", rows=1000, cols=5)
+            sheet_users.append_row(["Дата", "ID", "Username", "Ім'я", "Статус"])
+
+        return sheet_leads, sheet_users
+
     except Exception as e:
-        logger.error(f"❌ Sheets Error: {e}")
+        logger.error(f"❌ Критична помилка Google Sheets: {e}")
         return None, None
 
 SHEET_LEADS, SHEET_USERS = init_google_sheets()
