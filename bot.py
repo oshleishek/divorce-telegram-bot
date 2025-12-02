@@ -173,54 +173,63 @@ async def quiz_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=query.message.chat_id, text=TXT_HOOK, parse_mode='HTML', reply_markup=markup)
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Фінал: Зберігає, шле адміну і клієнту"""
+    """Debug-версия: Шлет ошибки прямо в чат"""
     contact = update.message.contact
     user = update.effective_user
     
-    # Збираємо дані
-    lead = {
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "id": str(user.id),
-        "username": f"@{user.username}" if user.username else "No Username",
-        "name": contact.first_name or user.first_name,
-        "phone": contact.phone_number,
-        "children": context.user_data.get('children', '-'),
-        "consent": context.user_data.get('consent', '-'),
-        "property": context.user_data.get('property', '-'),
-        "location": context.user_data.get('location', '-')
-    }
+    phone = contact.phone_number
+    first_name = contact.first_name or user.first_name or "Клієнт"
+    
+    # 1. Формируем строку данных (10 элементов)
+    row_to_save = [
+        datetime.now().strftime("%Y-%m-%d %H:%M"),          # 1. Дата
+        str(user.id),                                       # 2. ID
+        f"@{user.username}" if user.username else "-",      # 3. Username
+        first_name,                                         # 4. Им'я
+        phone,                                              # 5. Телефон
+        context.user_data.get('children', '-'),             # 6. Діти
+        context.user_data.get('consent', '-'),              # 7. Згода
+        context.user_data.get('property', '-'),             # 8. Майно
+        context.user_data.get('location', '-'),             # 9. Місце
+        "New Lead"                                          # 10. Статус
+    ]
 
-    # 1. Google Sheets
+    # 2. Пытаемся сохранить и ловим ошибку
+    save_error = None
+    
     if SHEET_LEADS:
         try:
-            SHEET_LEADS.append_row(list(lead.values()) + ["New Lead"])
+            # Пытаемся добавить строку
+            SHEET_LEADS.append_row(row_to_save)
+            logger.info(f"✅ Лід збережено в таблицю: {phone}")
         except Exception as e:
             logger.error(f"❌ Sheets Error: {e}")
+            save_error = str(e) # Запоминаем ошибку
+    else:
+        save_error = "Таблица 'Leads' не найдена при старте бота."
 
-    # 2. ПОВІДОМЛЕННЯ ТОБІ (АДМІНУ)
-    if ADMIN_ID:
-        admin_text = (
-            f"🔥 <b>НОВИЙ ЛІД!</b>\n\n"
-            f"👤 <b>Ім'я:</b> {lead['name']}\n"
-            f"📱 <b>Телефон:</b> <code>{lead['phone']}</code>\n"
-            f"🔗 <b>Telegram:</b> {lead['username']}\n\n"
-            f"👶 <b>Діти:</b> {lead['children']}\n"
-            f"🤝 <b>Згода:</b> {lead['consent']}\n"
-            f"🏠 <b>Майно:</b> {lead['property']}\n"
-            f"🌍 <b>Місце:</b> {lead['location']}"
+    # 3. Отправляем ответ клиенту (тебе)
+    if save_error:
+        # Если была ошибка - пишем её прямо в чат
+        await update.message.reply_text(
+            f"⚠️ <b>Помилка запису в таблицю!</b>\n\nТехнічні деталі:\n<code>{save_error}</code>",
+            parse_mode='HTML'
         )
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode='HTML')
-            logger.info(f"✅ Повідомлення адміну надіслано")
-        except Exception as e:
-            logger.error(f"❌ Не вдалося відправити адміну: {e}")
+    else:
+        # Если все ок
+        await update.message.reply_text(
+            TXT_FINAL.format(phone=phone),
+            parse_mode='HTML',
+            reply_markup=ReplyKeyboardRemove()
+        )
 
-    # 3. Відповідь клієнту
-    await update.message.reply_text(
-        TXT_FINAL.format(phone=lead['phone']),
-        parse_mode='HTML',
-        reply_markup=ReplyKeyboardRemove()
-    )
+    # 4. Сообщение Админу (Тобы)
+    if ADMIN_ID:
+        try:
+            admin_text = f"🔥 <b>НОВИЙ ЛІД!</b>\n{phone}\n\nСтатус таблиці: {'✅ Ок' if not save_error else '❌ Помилка'}"
+            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_text, parse_mode='HTML')
+        except:
+            pass
 
 # =====================================================
 # SERVER
