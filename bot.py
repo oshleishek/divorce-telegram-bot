@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL', '')
 GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL')
+ADMIN_ID = os.environ.get('ADMIN_ID')
 
 # =====================================================
 # ПІДКЛЮЧЕННЯ ДО GOOGLE SHEETS
@@ -1203,6 +1204,7 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     # Зберігаємо
     await save_to_sheets(context.user_data)
     await send_to_make(context.user_data)
+    await send_lead_to_admin(context, context.user_data)
     
     # Подяка
     thanks_text = f"""
@@ -1281,10 +1283,11 @@ async def save_to_sheets(user_data):
         logger.error(f"❌ Помилка збереження: {e}")
 
 async def send_to_make(user_data):
-    """Відправляє webhook в Make.com"""
+    """Відправляє webhook в Make.com (ЯКЩО НАЛАШТОВАНО)"""
     
+    # 👇 ПРЕДОХРАНИТЕЛЬ: Если ссылки нет, просто выходим
     if not MAKE_WEBHOOK_URL:
-        return
+        return 
     
     try:
         payload = {
@@ -1299,13 +1302,13 @@ async def send_to_make(user_data):
             'completed_at': user_data.get('completed_at')
         }
         
-        response = requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=5)
-        
-        if response.status_code == 200:
-            logger.info("✅ Webhook відправлено")
+        # Використовуємо run_in_executor, щоб requests не блокував бота
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=5))
+        logger.info("✅ Дані відправлено в Make")
             
     except Exception as e:
-        logger.error(f"❌ Помилка webhook: {e}")
+        logger.error(f"⚠️ Make Error (не критично): {e}")
 
 async def send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, segment, segment_name, cost, time):
     """Відправляє персоналізований результат"""
