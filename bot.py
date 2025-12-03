@@ -1138,9 +1138,7 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     
     # 2. Відправляємо в Make (якщо налаштовано)
     await send_to_make(context.user_data)
-    
-    # ❌ ТУТ МИ ПРИБРАЛИ send_lead_to_admin
-    
+        
     # Подяка
     thanks_text = f"""
 ✅ <b>Дякую, {first_name}!</b>
@@ -1179,100 +1177,7 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     )
     logger.info(f"⏰ Заплановано нагадування про оффер для {user_id} через 2 години")
 
-# =====================================================
-# ЗАГАЛЬНА ФУНКЦІЯ ОБРОБКИ ЛІДА (ДЛЯ КНОПКИ І ТЕКСТУ)
-# =====================================================
-async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT_TYPE, phone_number: str):
-    """Спільна логіка для обробки отриманого номера (через кнопку або текст)"""
-    
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    
-    # Отримуємо ім'я з user_data або з профілю
-    first_name = context.user_data.get('first_name') or user.first_name or "Клієнт"
-    last_name = context.user_data.get('last_name') or user.last_name or ""
-    
-    # Оновлюємо дані
-    context.user_data['first_name'] = first_name
-    context.user_data['last_name'] = last_name
-    context.user_data['phone_number'] = phone_number
-    context.user_data['completed_at'] = datetime.now().isoformat()
-    
-    # Скасовуємо таймер нагадування про телефон (якщо він був)
-    try:
-        job_name = f"phone_reminder_{user.id}"
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
-    except:
-        pass
 
-    user_id = user.id
-    username = user.username
-    
-    await log_event(user_id, username, "phone_shared", f"{first_name} - {phone_number}")
-    
-    # Оновлюємо статус в All_Users
-    if SHEETS_ALL_USERS:
-        try:
-            cell = SHEETS_ALL_USERS.find(str(user_id), in_column=2)
-            if cell:
-                SHEETS_ALL_USERS.update_cell(cell.row, 6, "Так")
-        except:
-            pass
-    
-    # Визначаємо сегмент
-    segment, segment_name, cost, time = determine_segment(context.user_data)
-    context.user_data['segment'] = segment
-    context.user_data['segment_name'] = segment_name
-    context.user_data['cost_estimate'] = cost
-    context.user_data['time_estimate'] = time
-    context.user_data['status'] = 'new'
-    
-    logger.info(f"📊 Новий лід: {first_name} ({segment} - {segment_name})")
-    
-    # Зберігаємо
-    await save_to_sheets(context.user_data)
-    await send_to_make(context.user_data)
-    await send_lead_to_admin(context, context.user_data)
-    
-    # Подяка
-    thanks_text = f"""
-✅ <b>Дякую, {first_name}!</b>
-
-Зараз я розрахую вартість і строки саме для вашої ситуації...
-"""
-    from telegram import ReplyKeyboardRemove
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=thanks_text,
-        parse_mode='HTML',
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    # Пауза
-    await asyncio.sleep(2)
-    
-    # Результат
-    await send_result(update, context, segment, segment_name, cost, time)
-    
-    # Пауза
-    await asyncio.sleep(3)
-    
-    # Оффер (без передачі first_name, як ми і виправили раніше)
-    await send_first_offer(update, context)
-    
-    # Плануємо нагадування про оффер
-    job_name = f"offer_reminder_{user_id}"
-    context.job_queue.run_once(
-        offer_reminder_callback,
-        7200, 
-        chat_id=chat_id,
-        user_id=user_id,
-        name=job_name,
-        data=first_name
-    )
-    logger.info(f"⏰ Заплановано нагадування про оффер для {user_id} через 2 години")
 
 async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка контакту через кнопку"""
