@@ -1085,6 +1085,45 @@ async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     logger.info(f"⏰ Заплановано нагадування про телефон через 60 с для {user_id}")
 
+# 👇 ВСТАВ ЦЮ ФУНКЦІЮ ПЕРЕД finalize_lead_processing
+async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
+    """Відправляє красиву карточку ліда адмінистратору в Telegram"""
+    
+    if not ADMIN_ID:
+        logger.warning("⚠️ ADMIN_ID не встановлено в Environment Variables!")
+        return
+
+    # Формуємо красивий текст
+    text = f"""
+🔥 <b>НОВИЙ ЛІД! (Divorce Bot)</b>
+
+👤 <b>{user_data.get('first_name')} {user_data.get('last_name')}</b>
+📱 <code>{user_data.get('phone_number')}</code>
+🔗 @{user_data.get('username', 'немає')}
+
+📊 <b>Сегмент: {user_data.get('segment')}</b>
+└ {user_data.get('segment_name')}
+
+💰 <b>Бюджет:</b> {user_data.get('cost_estimate')}
+⏱ <b>Строки:</b> {user_data.get('time_estimate')}
+
+📝 <b>Відповіді:</b>
+• Діти: {user_data.get('has_children')}
+• Згода: {user_data.get('spouse_consent')}
+• Майно: {user_data.get('property_dispute')}
+• Локація: {user_data.get('spouse_location')}
+• Терміновість: {user_data.get('urgency')}
+
+<i>Дзвони швидше! 🚀</i>
+"""
+
+    try:
+        # Відправляємо повідомлення адміну
+        await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
+        logger.info(f"✅ Лід відправлено адміну ({ADMIN_ID})")
+    except Exception as e:
+        logger.error(f"❌ Не вдалося відправити ліда адміну: {e}")
+
 # =====================================================
 # ЗАГАЛЬНА ФУНКЦІЯ ОБРОБКИ ЛІДА (ДЛЯ КНОПКИ І ТЕКСТУ)
 # =====================================================
