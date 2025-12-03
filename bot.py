@@ -986,7 +986,7 @@ async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Клавіатура для Q4 (ОНОВЛЕНА)
     keyboard_q4 = [
-        [InlineKeyboardButton("🇺🇦 Ми обоє в Україні", callback_data='q4_ukraine')],
+        [InlineKeyboardButton("🇺🇦 Ми обидва в Україні", callback_data='q4_ukraine')],
         [InlineKeyboardButton("✈️ Хтось із нас за кордоном", callback_data='q4_abroad')], # Включает: Я / Он / Мы оба
         [InlineKeyboardButton("❓ Не знаю де чоловік/дружина", callback_data='q4_unknown')]
     ]
