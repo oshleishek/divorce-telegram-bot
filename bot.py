@@ -1085,44 +1085,99 @@ async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     logger.info(f"⏰ Заплановано нагадування про телефон через 60 с для {user_id}")
 
-# 👇 ВСТАВ ЦЮ ФУНКЦІЮ ПЕРЕД finalize_lead_processing
-async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
-    """Відправляє красиву карточку ліда адмінистратору в Telegram"""
+async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT_TYPE, phone_number: str):
+    """Спільна логіка для обробки отриманого номера"""
     
-    if not ADMIN_ID:
-        logger.warning("⚠️ ADMIN_ID не встановлено в Environment Variables!")
-        return
-
-    # Формуємо красивий текст
-    text = f"""
-🔥 <b>НОВИЙ ЛІД! (Divorce Bot)</b>
-
-👤 <b>{user_data.get('first_name')} {user_data.get('last_name')}</b>
-📱 <code>{user_data.get('phone_number')}</code>
-🔗 @{user_data.get('username', 'немає')}
-
-📊 <b>Сегмент: {user_data.get('segment')}</b>
-└ {user_data.get('segment_name')}
-
-💰 <b>Бюджет:</b> {user_data.get('cost_estimate')}
-⏱ <b>Строки:</b> {user_data.get('time_estimate')}
-
-📝 <b>Відповіді:</b>
-• Діти: {user_data.get('has_children')}
-• Згода: {user_data.get('spouse_consent')}
-• Майно: {user_data.get('property_dispute')}
-• Локація: {user_data.get('spouse_location')}
-• Терміновість: {user_data.get('urgency')}
-
-<i>Дзвони швидше! 🚀</i>
-"""
-
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    # Отримуємо та оновлюємо дані
+    first_name = context.user_data.get('first_name') or user.first_name or "Клієнт"
+    last_name = context.user_data.get('last_name') or user.last_name or ""
+    
+    context.user_data['first_name'] = first_name
+    context.user_data['last_name'] = last_name
+    context.user_data['phone_number'] = phone_number
+    context.user_data['completed_at'] = datetime.now().isoformat()
+    
+    # Скасовуємо таймер
     try:
-        # Відправляємо повідомлення адміну
-        await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
-        logger.info(f"✅ Лід відправлено адміну ({ADMIN_ID})")
-    except Exception as e:
-        logger.error(f"❌ Не вдалося відправити ліда адміну: {e}")
+        job_name = f"phone_reminder_{user.id}"
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
+    except:
+        pass
+
+    user_id = user.id
+    username = user.username
+    
+    await log_event(user_id, username, "phone_shared", f"{first_name} - {phone_number}")
+    
+    # Оновлюємо статус в All_Users
+    if SHEETS_ALL_USERS:
+        try:
+            cell = SHEETS_ALL_USERS.find(str(user_id), in_column=2)
+            if cell:
+                SHEETS_ALL_USERS.update_cell(cell.row, 6, "Так")
+        except:
+            pass
+    
+    # Сегментація
+    segment, segment_name, cost, time = determine_segment(context.user_data)
+    context.user_data['segment'] = segment
+    context.user_data['segment_name'] = segment_name
+    context.user_data['cost_estimate'] = cost
+    context.user_data['time_estimate'] = time
+    context.user_data['status'] = 'new'
+    
+    logger.info(f"📊 Новий лід: {first_name} ({segment} - {segment_name})")
+    
+    # 1. Зберігаємо в Таблицю (це важливо зробити одразу)
+    await save_to_sheets(context.user_data)
+    
+    # 2. Відправляємо в Make (якщо налаштовано)
+    await send_to_make(context.user_data)
+    
+    # ❌ ТУТ МИ ПРИБРАЛИ send_lead_to_admin
+    
+    # Подяка
+    thanks_text = f"""
+✅ <b>Дякую, {first_name}!</b>
+
+Зараз я розрахую вартість і строки саме для вашої ситуації...
+"""
+    from telegram import ReplyKeyboardRemove
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=thanks_text,
+        parse_mode='HTML',
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    # Пауза
+    await asyncio.sleep(2)
+    
+    # Результат
+    await send_result(update, context, segment, segment_name, cost, time)
+    
+    # Пауза
+    await asyncio.sleep(3)
+    
+    # Оффер
+    await send_first_offer(update, context)
+    
+    # Плануємо нагадування про оффер
+    job_name = f"offer_reminder_{user_id}"
+    context.job_queue.run_once(
+        offer_reminder_callback,
+        7200, 
+        chat_id=chat_id,
+        user_id=user_id,
+        name=job_name,
+        data=first_name
+    )
+    logger.info(f"⏰ Заплановано нагадування про оффер для {user_id} через 2 години")
 
 # =====================================================
 # ЗАГАЛЬНА ФУНКЦІЯ ОБРОБКИ ЛІДА (ДЛЯ КНОПКИ І ТЕКСТУ)
@@ -1322,7 +1377,7 @@ async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ (З позитивною інструкцією)
+# ЗАМІНИ ЦЮ ФУНКЦІЮ (МИ ДОДАЛИ ВІДПРАВКУ АДМІНУ СЮДИ)
 async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка запису на консультацію (З КОНФЕТІ та бонусом)"""
     
@@ -1346,6 +1401,9 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"🔥 ГАРЯЧИЙ ЛІД! {first_name} хоче консультацію!")
     
+    # 👇 НОВЕ: ВІДПРАВЛЯЄМО ЛІДА ТОБІ ТУТ (В МОМЕНТ ЗАПИСУ)
+    await send_lead_to_admin(context, user_data)
+    
     await log_event(user_id, username, "consultation_booked", "Запис на консультацію!")
     
     # Оновлюємо статус в All_Users
@@ -1357,7 +1415,7 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     
-    # Webhook в Make
+    # Webhook в Make (повторно, як подія 'consultation_request')
     if MAKE_WEBHOOK_URL:
         try:
             payload = {
@@ -1368,19 +1426,11 @@ async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'segment': user_data.get('segment'),
                 'segment_name': user_data.get('segment_name')
             }
-            requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=5)
+            # Використовуємо run_in_executor
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=5))
         except:
             pass
-    
-    # Відправляємо КОНФЕТІ
-    try:
-        await context.bot.set_message_reaction(
-            chat_id=query.message.chat_id,
-            message_id=query.message.message_id,
-            reaction=[ReactionTypeEmoji(emoji="🎉")]
-        )
-    except:
-        pass
     
     text = get_consultation_booked_text(first_name, user_data.get('phone_number'))
     
