@@ -1167,7 +1167,7 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     await send_result(update, context, segment, segment_name, cost, time)
     
     # Пауза
-    await asyncio.sleep(3)
+    await asyncio.sleep(8)
     
     # Оффер
     await send_first_offer(update, context)
