@@ -1261,7 +1261,7 @@ async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # === ПАУЗА НА ЧИТАННЯ (4 секунди) ===
-    await asyncio.sleep(4)
+    await asyncio.sleep(5)
     
     # === ПОВІДОМЛЕННЯ 2: ЦІНА + ДЕДЛАЙН + КНОПКА ===
     text_part_2 = """
