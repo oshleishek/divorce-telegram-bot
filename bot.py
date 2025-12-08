@@ -1513,6 +1513,29 @@ async def offer_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =====================================================
+# ОБРОБНИК ПОМИЛОК (Global Error Handler)
+# =====================================================
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Логує помилку та повідомляє адміна"""
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+
+    # Якщо є ADMIN_ID, повідомляємо його про збій
+    if ADMIN_ID:
+        try:
+            # Формуємо повідомлення про помилку
+            error_message = f"⚠️ <b>У бота сталася помилка!</b>\n\n<code>{context.error}</code>"
+            
+            # Обрізаємо, якщо занадто довге
+            if len(error_message) > 4000:
+                error_message = error_message[:4000]
+            
+            await context.bot.send_message(chat_id=ADMIN_ID, text=error_message, parse_mode='HTML')
+        except:
+            # Якщо не вдалося відправити повідомлення адміну, просто мовчимо (помилка вже в логах)
+            pass
+
+# =====================================================
 # ГОЛОВНА ФУНКЦІЯ
 # =====================================================
 
@@ -1542,6 +1565,8 @@ def main():
     application.add_handler(CallbackQueryHandler(book_consultation, pattern='^book_consultation$'))
     application.add_handler(MessageHandler(filters.CONTACT, process_contact))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    application.add_error_handler(error_handler)
     
     logger.info("🚀 Бот v3.1 запущено!")
     logger.info("📊 10 сегментів активовано")
