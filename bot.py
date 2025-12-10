@@ -783,7 +783,6 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    # Отримуємо та оновлюємо дані
     first_name = context.user_data.get('first_name') or user.first_name or "Клієнт"
     last_name = context.user_data.get('last_name') or user.last_name or ""
     
@@ -792,7 +791,6 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     context.user_data['phone_number'] = phone_number
     context.user_data['completed_at'] = datetime.now().isoformat()
     
-    # Скасовуємо таймер
     try:
         job_name = f"phone_reminder_{user.id}"
         current_jobs = context.job_queue.get_jobs_by_name(job_name)
@@ -806,7 +804,6 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     
     await log_event(user_id, username, "phone_shared", f"{first_name} - {phone_number}")
     
-    # Оновлюємо статус в All_Users
     if SHEETS_ALL_USERS:
         try:
             cell = SHEETS_ALL_USERS.find(str(user_id), in_column=2)
@@ -815,7 +812,7 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
         except:
             pass
     
-    # Сегментація
+    # Сегментація (вже з діапазонами цін)
     segment, segment_name, cost, time = determine_segment(context.user_data)
     context.user_data['segment'] = segment
     context.user_data['segment_name'] = segment_name
@@ -825,17 +822,15 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     
     logger.info(f"📊 Новий лід: {first_name} ({segment} - {segment_name})")
     
-    # 1. Зберігаємо в Таблицю (це важливо зробити одразу)
+    # 1. Зберігаємо (Sheets + Make)
     await save_to_sheets(context.user_data)
-    
-    # 2. Відправляємо в Make (якщо налаштовано)
     await send_to_make(context.user_data)
-        
+    
     # Подяка
     thanks_text = f"""
 ✅ <b>Дякую, {first_name}!</b>
 
-Зараз я розрахую вартість і строки саме для вашої ситуації...
+Зараз я сформулюю пропозицію для вашої ситуації...
 """
     from telegram import ReplyKeyboardRemove
     await context.bot.send_message(
@@ -848,16 +843,16 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     # Пауза
     await asyncio.sleep(2)
     
-    # Результат
+    # Результат (вже з дисклеймером)
     await send_result(update, context, segment, segment_name, cost, time)
     
-    # Пауза
+    # Пауза (трохи довша, бо тексту більше)
     await asyncio.sleep(8)
     
-    # Оффер
+    # Оффер (Tripwire 199)
     await send_first_offer(update, context)
     
-    # Плануємо нагадування про оффер
+    # Нагадування про оффер
     job_name = f"offer_reminder_{user_id}"
     context.job_queue.run_once(
         offer_reminder_callback,
@@ -868,9 +863,7 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
         data=first_name
     )
     logger.info(f"⏰ Заплановано нагадування про оффер для {user_id} через 2 години")
-
-
-
+    
 async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка контакту через кнопку"""
     contact = update.message.contact
@@ -940,14 +933,12 @@ async def send_to_make(user_data):
 async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
     """Відправляє красиву карточку ліда адмінистратору в Telegram"""
     
-    # Переконайся, що зверху файлу є змінна ADMIN_ID
     if not ADMIN_ID:
         logger.warning("⚠️ ADMIN_ID не встановлено!")
         return
 
-    # Формуємо текст
     text = f"""
-🔥 <b>НОВИЙ ЛІД! (Divorce Bot)</b>
+💰 <b>ЗАМОВЛЕННЯ (199 грн)!</b>
 
 👤 <b>{user_data.get('first_name')} {user_data.get('last_name')}</b>
 📱 <code>{user_data.get('phone_number')}</code>
@@ -956,7 +947,7 @@ async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
 📊 <b>Сегмент: {user_data.get('segment')}</b>
 └ {user_data.get('segment_name')}
 
-💰 <b>Бюджет:</b> {user_data.get('cost_estimate')}
+💰 <b>Орієнтир:</b> {user_data.get('cost_estimate')}
 ⏱ <b>Строки:</b> {user_data.get('time_estimate')}
 
 📝 <b>Відповіді:</b>
@@ -969,6 +960,11 @@ async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
 <i>Дзвони швидше! 🚀</i>
 """
 
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
+        logger.info(f"✅ Лід відправлено адміну ({ADMIN_ID})")
+    except Exception as e:
+        logger.error(f"❌ Не вдалося відправити ліда адміну: {e}")
     try:
         # Відправляємо повідомлення адміну
         await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
