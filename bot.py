@@ -216,55 +216,52 @@ def run_flask():
 
 def determine_segment(user_data):
     """
-    Сегментація на основі звіту ринку 2025 року.
-    Ціни включають: Гонорар адвоката + Судовий збір (1211 грн) + Супутні витрати.
+    Оновлена логіка v3.5: Враховує конфлікти по дітях та майну.
     """
     has_children = user_data.get('has_children') == 'yes'
-    spouse_consent = user_data.get('spouse_consent')
-    property_dispute = user_data.get('property_dispute')
+    conflict_children = user_data.get('conflict_children') == 'yes'  # Новий прапорець
+    
+    property_dispute = user_data.get('property_dispute') == 'yes'
+    conflict_property = user_data.get('conflict_property') == 'yes'  # Новий прапорець
+    
     spouse_location = user_data.get('spouse_location')
     urgency = user_data.get('urgency')
-    
-    # 1. МІЖНАРОДНІ (D1/D2) - Сценарій E звіту (логістика + складність)
+    spouse_consent = user_data.get('spouse_consent')
+
+    # 1. ЗА КОРДОНОМ (D)
     if spouse_location == 'abroad':
         if urgency == 'high':
             return ('D1', '🌍 Міжнародне розлучення (VIP)', '18 000 — 26 000 грн', '4-5 місяців')
-        else:
-            return ('D2', '🌍 Міжнародне розлучення (Стандарт)', '14 000 — 20 000 грн', '4-6 місяців')
+        return ('D2', '🌍 Міжнародне розлучення (Стандарт)', '14 000 — 20 000 грн', '4-6 місяців')
     
-    # 2. НЕВІДОМЕ МІСЦЕ (E1/E2) - Сценарій E звіту (розшук)
+    # 2. НЕВІДОМЕ МІСЦЕ (E)
     if spouse_location == 'unknown':
-        return ('E2', '🔍 Розлучення з розшуком', '17 000 — 27 000 грн', '6-8 місяців') if spouse_consent == 'no' else ('E1', '🔍 Розлучення без адреси', '12 000 — 16 000 грн', '5-7 місяців')
-    
-    # 3. МАЙНО (C1/C2) - Сценарій D звіту (найдорожчий)
-    if property_dispute == 'yes':
-        if has_children:
-             # Найскладніший кейс. Ціни стартують від 30к.
-             return ('C1', '💼 Комплексний майновий спір', '35 000 — 80 000+ грн', '12-24 місяців')
-        else:
-             return ('C2', '💰 Розділ майна (без дітей)', '25 000 — 50 000 грн', '8-12 місяців')
-    
-    # 4. ДІТИ (B1/B2)
-    if has_children:
-        if spouse_consent == 'no':
-            # Сценарій C (Позовне провадження + Опіка)
-            return ('B1', '🛡 Судовий спір (Діти)', '14 000 — 22 000 грн', '5-8 місяців')
-        else:
-            # Сценарій B (Мирний, але з нотаріусом!)
-            # Звіт каже: 10-15 тис грн (через нотаріуса)
-            return ('B2', '👨‍👩‍👧 Розлучення за згодою', '10 000 — 15 000 грн', '3-4 місяці')
+        return ('E2', '🔍 Розлучення з розшуком', '16 000 — 24 000 грн', '6-9 місяців')
 
-    # 5. БЕЗ ДІТЕЙ (A1/A2) - Сценарій C ("Економ" або "Під ключ")
-    if not has_children and spouse_consent == 'yes':
-        if urgency == 'high':
-            # Швидше - значить дорожче (пріоритет)
-            return ('A1', '⚡️ Експрес-розлучення', '6 500 — 9 000 грн', '3-4 місяці')
+    # 3. МАЙНО (C) - ТЕПЕР РОЗУМНЕ!
+    if property_dispute:
+        if conflict_property:
+            # Є конфлікт -> Дорого
+            if has_children:
+                return ('C1', '💼 Комплексний майновий спір', '25 000 — 50 000+ грн', '8-16 місяців')
+            else:
+                return ('C1', '💰 Судовий поділ майна', '18 000 — 30 000 грн', '6-10 місяців')
         else:
-            # Сценарій C "Економ" + Збір
-            return ('A2', '✅ Стандартне розлучення', '5 500 — 8 000 грн', '3-5 місяців')
+            # Майно є, але конфлікту немає -> Дешевше (Твій випадок!)
+            return ('C2_PEACE', '🤝 Оформлення поділу майна', '10 000 — 16 000 грн', '3-5 місяців')
+
+    # 4. ДІТИ (B)
+    if has_children:
+        if conflict_children:
+            return ('B1', '🛡 Судовий спір за дітей', '14 000 — 22 000 грн', '5-8 місяців')
+        else:
+            return ('B2', '👨‍👩‍👧 Мирне розлучення з дітьми', '8 000 — 12 000 грн', '3-4 місяці')
+
+    # 5. ПРОСТІ (A)
+    if urgency == 'high':
+        return ('A1', '⚡️ Експрес-розлучення', '5 500 — 7 500 грн', '2-3 місяці')
     
-    # Дефолтний (Сценарій C "Під ключ")
-    return ('B2', '📋 Стандартне розлучення', '9 000 — 14 000 грн', '4-6 місяців')
+    return ('A2', '✅ Стандартне розлучення', '4 500 — 6 500 грн', '3-4 місяці')
 
 # =====================================================
 # 📝 ПОКРАЩЕНІ ТЕКСТИ ДЛЯ КОРИСТУВАЧА
@@ -292,7 +289,16 @@ TEXT_Q1 = """
 
 # 📝 МІКРОКОМІТИ (нові тексти після відповідей)
 MICROCOMMIT_Q1_YES = "✅ Зрозуміло, є діти.\n\n"
-MICROCOMMIT_Q1_NO = "✅ Зрозуміло, дітей немає.\n\n"
+MICROCOMMIT_Q1_NO = "✅ Зрозуміло.\n\n"
+
+# 👇 НОВЕ: Уточнення по дітях
+TEXT_Q1_CLARIFY = """
+<b>Уточнення по дітях:</b>
+
+Скажіть, чи є у вас спір з чоловіком/дружиною щодо того, з ким житимуть діти, або щодо розміру аліментів?
+
+<i>Це кардинально впливає на складність справи та бюджет.</i>
+"""
 
 # 📝 ТЕКСТ: Питання 2 (ПОКРАЩЕНО)
 TEXT_Q2 = """<b>Питання 2 з 6</b>
@@ -320,6 +326,15 @@ TEXT_Q3 = """<b>Питання 3 з 6</b>
 MICROCOMMIT_Q3_YES = "✅ Ага, розділ майна. Це вимагає особливої уваги.\n\n"
 MICROCOMMIT_Q3_NO = "✅ Добре, майна немає або врегульовано.\n\n"
 MICROCOMMIT_Q3_UNSURE = "✅ Зрозуміло, розберемося.\n\n"
+
+# 👇 НОВЕ: Уточнення по майну
+TEXT_Q3_CLARIFY = """
+<b>Уточнення по майну:</b>
+
+Чи є між вами конфлікт щодо поділу?
+
+<i>Тобто: ви вже домовилися, кому що дістанеться (потрібно лише юридично оформити), чи кожен тягне ковдру на себе (потрібен суд)?</i>
+"""
 
 # 📝 ТЕКСТ: Питання 4 (ПОКРАЩЕНО)
 TEXT_Q4 = """<b>Питання 4 з 6</b>
@@ -560,6 +575,23 @@ SEGMENT_MESSAGES = {
 • Оцінка активів
 • Мінімізація податків""" + DISCLAIMER_TEXT,
 
+
+    'C2_PEACE': """🤝 <b>Тип справи: Юридичне оформлення поділу майна</b>
+
+Ви домовилися — це супер. Залишилося обрати найдешевший шлях оформлення, щоб потім ніхто не "передумав".
+
+💰 <b>Бюджет:</b> 10 000 — 16 000 грн
+⏱ <b>Строки:</b> 3-5 місяців
+
+<b>💡 Аналітика OPORA:</b>
+Є два шляхи: Нотаріус або "Мирний суд".
+Нотаріус — це швидко, але дорого (1% держмита + 1% пенсійного фонду + послуги). Для квартири за $50k це ~$1500 витрат одразу.
+Через суд можна поділити майно значно дешевше (фіксований судовий збір). Ми прорахуємо, що вигідніше саме вам.
+
+<b>Що входить:</b>
+• Підготовка договору/позову
+• Гарантія, що майно не заберуть у майбутньому""",
+
     'D1': """🌍 <b>Тип справи: {segment_name}</b>
 
 Специфіка: Повна дистанційність.
@@ -697,6 +729,136 @@ async def question_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     await schedule_quiz_reminder(context, user_id, query.message.chat_id)
+
+# =====================================================
+# НОВІ ОБРОБНИКИ (ВСТАВИТИ ПІСЛЯ question_1)
+# =====================================================
+
+# 1. Якщо користувач натиснув "Є діти" -> Йдемо сюди, а не зразу на Q2
+async def question_1_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Уточнення конфлікту по дітях"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Зберігаємо, що діти є
+    context.user_data['has_children'] = 'yes'
+    
+    keyboard = [
+        [InlineKeyboardButton("🤝 Домовилися (Мирно)", callback_data='q1_sub_peace')],
+        [InlineKeyboardButton("⚔️ Є суперечки / Не платить", callback_data='q1_sub_conflict')]
+    ]
+    
+    await query.edit_message_text(
+        TEXT_Q1_CLARIFY,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# 2. Обробка переходу до Питання 2 (Згода)
+# Ця функція приймає вхід з ТРЬОХ місць:
+# - Немає дітей (q1_no)
+# - Є діти + Мир (q1_sub_peace)
+# - Є діти + Війна (q1_sub_conflict)
+async def question_2_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    # Логіка збереження попередніх відповідей
+    if data == 'q1_no':
+        context.user_data['has_children'] = 'no'
+        context.user_data['conflict_children'] = 'no'
+        microcommit = "✅ Зрозуміло, дітей немає.\n\n"
+    elif data == 'q1_sub_peace':
+        context.user_data['conflict_children'] = 'no'
+        microcommit = "✅ Чудово, що домовилися про дітей.\n\n"
+    elif data == 'q1_sub_conflict':
+        context.user_data['conflict_children'] = 'yes'
+        microcommit = "⚠️ Зрозуміло, питання дітей потребує захисту.\n\n"
+    else:
+        microcommit = ""
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Так, згоден/на", callback_data='q2_yes')],
+        [InlineKeyboardButton("❌ Ні, проти", callback_data='q2_no')],
+        [InlineKeyboardButton("🤷 Не знаю", callback_data='q2_unknown')]
+    ]
+    
+    await query.edit_message_text(
+        microcommit + TEXT_Q2,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# 3. Обробка майна (з заміною переходу)
+async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Q3: Майно"""
+    query = update.callback_query
+    await query.answer()
+    
+    consent = query.data.replace('q2_', '')
+    context.user_data['spouse_consent'] = consent
+    
+    keyboard = [
+        [InlineKeyboardButton("🏠 Так, є майно", callback_data='q3_yes')],
+        [InlineKeyboardButton("❌ Немає майна", callback_data='q3_no')]
+    ]
+    
+    await query.edit_message_text(
+        "✅ Прийнято.\n\n" + TEXT_Q3,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# 4. Уточнення по майну (ЯКЩО Є МАЙНО)
+async def question_3_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data['property_dispute'] = 'yes'
+    
+    keyboard = [
+        [InlineKeyboardButton("🤝 Вже поділили / Домовилися", callback_data='q3_sub_peace')],
+        [InlineKeyboardButton("⚔️ Є конфлікт / Не ділиться", callback_data='q3_sub_conflict')]
+    ]
+    
+    await query.edit_message_text(
+        TEXT_Q3_CLARIFY,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# 5. Перехід до Локації (Q4)
+# Приймає вхід від: q3_no, q3_sub_peace, q3_sub_conflict
+async def question_4_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data == 'q3_no':
+        context.user_data['property_dispute'] = 'no'
+        context.user_data['conflict_property'] = 'no'
+        microcommit = "✅ Зрозуміло, без майна.\n\n"
+    elif data == 'q3_sub_peace':
+        context.user_data['conflict_property'] = 'no'
+        microcommit = "✅ Добре, що є згода по майну.\n\n"
+    elif data == 'q3_sub_conflict':
+        context.user_data['conflict_property'] = 'yes'
+        microcommit = "⚠️ Зрозуміло, майновий спір.\n\n"
+    else:
+        microcommit = ""
+
+    keyboard = [
+        [InlineKeyboardButton("🇺🇦 Ми обоє в Україні", callback_data='q4_ukraine')],
+        [InlineKeyboardButton("✈️ Хтось із нас за кордоном", callback_data='q4_abroad')],
+        [InlineKeyboardButton("❓ Не знаю де чоловік/дружина", callback_data='q4_unknown')]
+    ]
+
+    await query.edit_message_text(
+        microcommit + TEXT_Q4,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def question_2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q2: Згода супруга (З МІКРОКОМІТОМ)"""
@@ -1515,10 +1677,29 @@ def main():
     
     # Реєструємо обробники
     application.add_handler(CommandHandler("start", start))
+ # === ОНОВЛЕНІ ХЕНДЛЕРИ КВІЗУ ===
+    
+    # 1. Старт квізу
     application.add_handler(CallbackQueryHandler(question_1, pattern='^start_quiz$'))
-    application.add_handler(CallbackQueryHandler(question_2, pattern='^q1_'))
+    
+    # 2. Гілка дітей
+    # Якщо "Так, діти є" -> йдемо на уточнення
+    application.add_handler(CallbackQueryHandler(question_1_clarify, pattern='^q1_yes$'))
+    
+    # Перехід на Питання 2 (Згода): спрацьовує якщо дітей немає АБО пройшли уточнення
+    application.add_handler(CallbackQueryHandler(question_2_entry, pattern='^(q1_no|q1_sub_.*)$'))
+    
+    # 3. Питання 3 (Майно)
     application.add_handler(CallbackQueryHandler(question_3, pattern='^q2_'))
-    application.add_handler(CallbackQueryHandler(question_4, pattern='^q3_'))
+    
+    # Гілка майна
+    # Якщо "Так, майно є" -> йдемо на уточнення
+    application.add_handler(CallbackQueryHandler(question_3_clarify, pattern='^q3_yes$'))
+    
+    # Перехід на Питання 4 (Локація): спрацьовує якщо майна немає АБО пройшли уточнення
+    application.add_handler(CallbackQueryHandler(question_4_entry, pattern='^(q3_no|q3_sub_.*)$'))
+    
+    # 4. Решта (без змін)
     application.add_handler(CallbackQueryHandler(question_5, pattern='^q4_'))
     application.add_handler(CallbackQueryHandler(question_6_phone, pattern='^q5_'))
     application.add_handler(CallbackQueryHandler(book_consultation, pattern='^book_consultation$'))
