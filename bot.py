@@ -704,7 +704,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =====================================================
-# ОБРОБНИКИ КВІЗУ (ПОКРАЩЕНІ З МІКРОКОМІТАМИ)
+# ОБРОБНИКИ КВІЗУ (FIXED v3.5 + INSIGHTS)
 # =====================================================
 
 async def question_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -714,57 +714,34 @@ async def question_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = update.effective_user.id
     username = update.effective_user.username
-    
     await log_event(user_id, username, "quiz_started", "Користувач почав квіз")
     
     keyboard = [
         [InlineKeyboardButton("👶 Так, є діти", callback_data='q1_yes')],
         [InlineKeyboardButton("❌ Немає дітей", callback_data='q1_no')]
     ]
-    
-    await query.edit_message_text(
-        TEXT_Q1,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    
+    await query.edit_message_text(TEXT_Q1, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
     await schedule_quiz_reminder(context, user_id, query.message.chat_id)
 
-# =====================================================
-# НОВІ ОБРОБНИКИ (ВСТАВИТИ ПІСЛЯ question_1)
-# =====================================================
-
-# 1. Якщо користувач натиснув "Є діти" -> Йдемо сюди, а не зразу на Q2
 async def question_1_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Уточнення конфлікту по дітях"""
+    """Уточнення: Конфлікт по дітях"""
     query = update.callback_query
     await query.answer()
-    
-    # Зберігаємо, що діти є
-    context.user_data['has_children'] = 'yes'
+    context.user_data['has_children'] = 'yes' # Фіксуємо факт
     
     keyboard = [
         [InlineKeyboardButton("🤝 Домовилися (Мирно)", callback_data='q1_sub_peace')],
         [InlineKeyboardButton("⚔️ Є суперечки", callback_data='q1_sub_conflict')]
     ]
-    
-    await query.edit_message_text(
-        TEXT_Q1_CLARIFY,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text(TEXT_Q1_CLARIFY, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# 2. Обробка переходу до Питання 2 (Згода)
-# Ця функція приймає вхід з ТРЬОХ місць:
-# - Немає дітей (q1_no)
-# - Є діти + Мир (q1_sub_peace)
-# - Є діти + Війна (q1_sub_conflict)
 async def question_2_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вхід у Q2 (Згода). Обробляє переходи з різних гілок."""
     query = update.callback_query
     await query.answer()
     data = query.data
     
-    # Логіка збереження попередніх відповідей
+    # Логіка збереження стану конфлікту
     if data == 'q1_no':
         context.user_data['has_children'] = 'no'
         context.user_data['conflict_children'] = 'no'
@@ -774,7 +751,7 @@ async def question_2_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         microcommit = "✅ Чудово, що домовилися про дітей.\n\n"
     elif data == 'q1_sub_conflict':
         context.user_data['conflict_children'] = 'yes'
-        microcommit = "⚠️ Зрозуміло, питання дітей потребує захисту.\n\n"
+        microcommit = "⚠️ Зрозуміло, питання дітей захистимо.\n\n"
     else:
         microcommit = ""
 
@@ -783,14 +760,8 @@ async def question_2_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ Ні, проти", callback_data='q2_no')],
         [InlineKeyboardButton("🤷 Не знаю", callback_data='q2_unknown')]
     ]
-    
-    await query.edit_message_text(
-        microcommit + TEXT_Q2,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text(microcommit + TEXT_Q2, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# 3. Обробка майна (з заміною переходу)
 async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Q3: Майно"""
     query = update.callback_query
@@ -799,42 +770,37 @@ async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     consent = query.data.replace('q2_', '')
     context.user_data['spouse_consent'] = consent
     
+    # Мікрокоміт залежно від згоди
+    if consent == 'yes': m = MICROCOMMIT_Q2_YES
+    elif consent == 'no': m = MICROCOMMIT_Q2_NO
+    else: m = MICROCOMMIT_Q2_UNKNOWN
+
     keyboard = [
         [InlineKeyboardButton("🏠 Так, є майно", callback_data='q3_yes')],
         [InlineKeyboardButton("❌ Немає майна", callback_data='q3_no')]
     ]
-    
-    await query.edit_message_text(
-        "✅ Прийнято.\n\n" + TEXT_Q3,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text(m + TEXT_Q3, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# 4. Уточнення по майну (ЯКЩО Є МАЙНО)
 async def question_3_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Уточнення: Конфлікт по майну"""
     query = update.callback_query
     await query.answer()
-    
-    context.user_data['property_dispute'] = 'yes'
+    context.user_data['property_dispute'] = 'yes' # Фіксуємо факт
     
     keyboard = [
         [InlineKeyboardButton("🤝 Вже поділили / Домовилися", callback_data='q3_sub_peace')],
         [InlineKeyboardButton("⚔️ Є конфлікт / Не ділиться", callback_data='q3_sub_conflict')]
     ]
-    
-    await query.edit_message_text(
-        TEXT_Q3_CLARIFY,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text(TEXT_Q3_CLARIFY, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# 5. Перехід до Локації (Q4)
-# Приймає вхід від: q3_no, q3_sub_peace, q3_sub_conflict
 async def question_4_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вхід у Q4 (Локація) + ПРОГРІВ (INSIGHTS)"""
     query = update.callback_query
     await query.answer()
+    chat_id = query.message.chat_id
     data = query.data
     
+    # 1. Логіка збереження стану майна
     if data == 'q3_no':
         context.user_data['property_dispute'] = 'no'
         context.user_data['conflict_property'] = 'no'
@@ -848,232 +814,66 @@ async def question_4_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         microcommit = ""
 
-    keyboard = [
-        [InlineKeyboardButton("🇺🇦 Ми обоє в Україні", callback_data='q4_ukraine')],
-        [InlineKeyboardButton("✈️ Хтось із нас за кордоном", callback_data='q4_abroad')],
-        [InlineKeyboardButton("❓ Не знаю де чоловік/дружина", callback_data='q4_unknown')]
-    ]
-
-    await query.edit_message_text(
-        microcommit + TEXT_Q4,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def question_2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q2: Згода супруга (З МІКРОКОМІТОМ)"""
-    query = update.callback_query
-    await query.answer()
+    # 2. Відправляємо мікрокоміт
+    await query.edit_message_text(microcommit, parse_mode='HTML')
     
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    
-    # Зберігаємо відповідь
-    answer = 'yes' if query.data == 'q1_yes' else 'no'
-    context.user_data['has_children'] = answer
-    
-    await log_event(user_id, username, "q1_answered", f"has_children={answer}")
-    
-    # МІКРОКОМІТ (підтвердження)
-    microcommit = MICROCOMMIT_Q1_YES if answer == 'yes' else MICROCOMMIT_Q1_NO
-    
-    text = microcommit + TEXT_Q2
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Так, згоден/на", callback_data='q2_yes')],
-        [InlineKeyboardButton("❌ Ні, категорично проти", callback_data='q2_no')],
-        [InlineKeyboardButton("🤷 Не знаю / не впевнений/а", callback_data='q2_unknown')]
-    ]
-    
-    await query.edit_message_text(
-        text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    
-    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
-
-async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q3: Розділ майна (З МІКРОКОМІТОМ)"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    
-    # Зберігаємо відповідь
-    consent = query.data.replace('q2_', '')
-    context.user_data['spouse_consent'] = consent
-    
-    await log_event(user_id, username, "q2_answered", f"spouse_consent={consent}")
-    
-    # МІКРОКОМІТ
-    if consent == 'yes':
-        microcommit = MICROCOMMIT_Q2_YES
-    elif consent == 'no':
-        microcommit = MICROCOMMIT_Q2_NO
-    else:
-        microcommit = MICROCOMMIT_Q2_UNKNOWN
-    
-    text = microcommit + TEXT_Q3
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ Так, є майно для розділу", callback_data='q3_yes')],
-        [InlineKeyboardButton("❌ Немає / все врегульовано", callback_data='q3_no')],
-        [InlineKeyboardButton("🤷 Не впевнений/а", callback_data='q3_unsure')]
-    ]
-    
-    await query.edit_message_text(
-        text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    
-    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
-
-# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ (ВЕРСІЯ З ПРОГРІВОМ)
-async def question_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q4: Місце супруга (З ЕКСПЕРТНИМ КОМЕНТАРЕМ)"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    chat_id = query.message.chat_id
-    
-    # Зберігаємо відповідь на Q3
-    property = query.data.replace('q3_', '')
-    context.user_data['property_dispute'] = property
-    
-    await log_event(user_id, update.effective_user.username, "q3_answered", f"property={property}")
-    
-    # 1. Визначаємо та відправляємо мікрокоміт
-    if property == 'yes': 
-        m = MICROCOMMIT_Q3_YES
-    elif property == 'no': 
-        m = MICROCOMMIT_Q3_NO
-    else: 
-        m = MICROCOMMIT_Q3_UNSURE
-    
-    await query.edit_message_text(m, parse_mode='HTML')
-    
-    # 2. Отримуємо експертний коментар (прогрів)
+    # 3. 🔥 ПРОГРІВ: Вибираємо та відправляємо Інсайт (Mini Case)
     trust_text = get_mini_case(context.user_data)
     
-    # 3. Імітація "друку" і пауза (щоб це виглядало як жива реакція)
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1)
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    await context.bot.send_message(chat_id=chat_id, text=trust_text, parse_mode='HTML')
     
-    # 4. Відправляємо коментар
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=trust_text,
-        parse_mode='HTML'
-    )
-    
-    # 5. Пауза на читання (трохи довша, щоб встигли прочитати)
+    # Пауза на читання
     await asyncio.sleep(4)
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-
-    # 6. Відправляємо наступне питання (Q4)
-    keyboard_q4 = [
+    
+    # 4. Показуємо питання Q4
+    keyboard = [
         [InlineKeyboardButton("🇺🇦 Ми обоє в Україні", callback_data='q4_ukraine')],
         [InlineKeyboardButton("✈️ Хтось із нас за кордоном", callback_data='q4_abroad')],
         [InlineKeyboardButton("❓ Не знаю де чоловік/дружина", callback_data='q4_unknown')]
     ]
-    reply_markup_q4 = InlineKeyboardMarkup(keyboard_q4)
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=TEXT_Q4,
-        parse_mode='HTML',
-        reply_markup=reply_markup_q4
-    )
-    
-    await schedule_quiz_reminder(context, user_id, chat_id)
+    await context.bot.send_message(chat_id=chat_id, text=TEXT_Q4, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def question_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q5: Терміновість (З МІКРОКОМІТОМ)"""
+    """Q5: Терміновість"""
     query = update.callback_query
     await query.answer()
     
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    
-    # Зберігаємо відповідь
     location = query.data.replace('q4_', '')
     context.user_data['spouse_location'] = location
     
-    await log_event(user_id, username, "q4_answered", f"spouse_location={location}")
-    
-    # МІКРОКОМІТ
-    if location == 'ukraine':
-        microcommit = MICROCOMMIT_Q4_UKRAINE
-    elif location == 'abroad':
-        microcommit = MICROCOMMIT_Q4_ABROAD
-    else:
-        microcommit = MICROCOMMIT_Q4_UNKNOWN
-    
-    text = microcommit + TEXT_Q5
+    if location == 'ukraine': m = MICROCOMMIT_Q4_UKRAINE
+    elif location == 'abroad': m = MICROCOMMIT_Q4_ABROAD
+    else: m = MICROCOMMIT_Q4_UNKNOWN
     
     keyboard = [
         [InlineKeyboardButton("⚡️ Дуже терміново (2-3 міс)", callback_data='q5_high')],
         [InlineKeyboardButton("⏳ Можу почекати (4-6 міс)", callback_data='q5_medium')],
         [InlineKeyboardButton("🤷 Не критично", callback_data='q5_low')]
     ]
-    
-    await query.edit_message_text(
-        text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    
-    await schedule_quiz_reminder(context, user_id, query.message.chat_id)
-# ЗАМІНИ ЦЮ ФУНКЦІЮ ПОВНІСТЮ (ПОВЕРТАЄМО ПРАВИЛЬНУ ЛОГІКУ)
+    await query.edit_message_text(m + TEXT_Q5, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q6: Запит номера телефону (з таймером на 60 с)"""
+    """Q6: Запит телефону"""
     query = update.callback_query
     await query.answer()
     
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    chat_id = query.message.chat_id
-    
-    # Зберігаємо відповідь на Q5
     urgency = query.data.replace('q5_', '')
     context.user_data['urgency'] = urgency
+    user_id = update.effective_user.id
     
-    await log_event(user_id, username, "q5_answered", f"urgency={urgency}")
-
-    # Скасовуємо стандартне нагадування (15 хв)
     await remove_quiz_reminder(context, user_id)
     
-    # Імпортуємо тут, якщо вони не імпортовані нагорі
+    # Імпорт тут, щоб не ламалось якщо нагорі немає
     from telegram import KeyboardButton, ReplyKeyboardMarkup
-    
-    # Клавіатура для запиту телефону
     keyboard = [[KeyboardButton("📱 Поділитися номером", request_contact=True)]]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     
-    # 1. Редагуємо попереднє повідомлення (вставляємо основний текст)
-    # Оскільки TEXT_Q6_PHONE тепер безпечний, це має спрацювати
     await query.edit_message_text(TEXT_Q6_PHONE, parse_mode='HTML')
-    
-    # 2. Відправляємо окреме повідомлення з кнопкою (ReplyKeyboardMarkup)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="👇 Натисніть кнопку нижче:",
-        reply_markup=reply_markup
-    )
+    await context.bot.send_message(chat_id=query.message.chat_id, text="👇 Натисніть кнопку нижче:", reply_markup=reply_markup)
 
-    # 3. Запускаємо СПЕЦІАЛЬНИЙ таймер на 60 секунд
-    context.job_queue.run_once(
-        phone_reminder_callback,
-        60,
-        chat_id=chat_id,
-        user_id=user_id,
-        name=f"phone_reminder_{user_id}" # Додав ім'я для порядку
-    )
-    logger.info(f"⏰ Заплановано нагадування про телефон через 60 с для {user_id}")
+    context.job_queue.run_once(phone_reminder_callback, 60, chat_id=query.message.chat_id, user_id=user_id, name=f"phone_reminder_{user_id}")
 
 async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT_TYPE, phone_number: str):
     """Спільна логіка для обробки отриманого номера"""
