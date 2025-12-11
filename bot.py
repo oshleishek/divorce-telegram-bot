@@ -1,44 +1,27 @@
 """
-Telegram Bot для лідогенерації адвокатів (Розлучення)
-Версія: 3.1 ULTIMATE IMPROVED
-Автор: Стас + Claude + Gemini
-
-ЗМІНИ В v3.1 (ПОКРАЩЕНА ВОРОНКА):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ Розширена сегментація: 4 → 10 сегментів (A1, A2, B1, B2, C1, C2, D1, D2, E1, E2)
-✅ Детальні мині-кейси (реальні історії з іменами, містами, результатами)
-✅ Мікрокоміти після кожної відповіді ("✅ Зрозуміло...")
-✅ Живі тексти з емпатією та поясненнями
-✅ Покращений оффер з реверс-ризиком та персоналізацією
-✅ Покращені результати для кожного сегменту
-
-ЗБЕРЕЖЕНО З v3.0:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ Аналітика конверсії (Analytics sheet)
-✅ Всі користувачі (All_Users sheet)
-✅ Ім'я з contact
-✅ Нагадування про квіз (15 хв) та телефон (60 сек)
-✅ Flask web-server для Render
-✅ Тексти в константах
+Telegram Bot: OPORA | Сервіс підбору адвокатів
+Версія: 3.5 FINAL (Stable Render Fix + Deep Diagnostic + Market Data 2025)
 """
 
 import os
 import logging
 import random
+import re
+import threading
+import asyncio
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ChatAction
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from flask import Flask
-import threading
-import asyncio
-from telegram.constants import ChatAction
-import re
 
 # =====================================================
-# НАЛАШТУВАННЯ ЛОГУВАННЯ
+# 1. НАЛАШТУВАННЯ
 # =====================================================
 
 logging.basicConfig(
@@ -47,36 +30,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# =====================================================
-# КОНСТАНТИ
-# =====================================================
-
-BOT_TOKEN = os.environ.get('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
-MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL', '')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
 GOOGLE_SHEET_URL = os.environ.get('GOOGLE_SHEET_URL')
 ADMIN_ID = os.environ.get('ADMIN_ID')
+MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL')
 
 # =====================================================
-# ПІДКЛЮЧЕННЯ ДО GOOGLE SHEETS
+# 2. GOOGLE SHEETS
 # =====================================================
 
 def init_google_sheets():
-    """Ініціалізація підключення до Google Sheets"""
     try:
-        required_vars = [
-            'GOOGLE_PROJECT_ID', 
-            'GOOGLE_PRIVATE_KEY', 
-            'GOOGLE_CLIENT_EMAIL',
-            'GOOGLE_SHEET_URL'
-        ]
+        required_vars = ['GOOGLE_PROJECT_ID', 'GOOGLE_PRIVATE_KEY', 'GOOGLE_CLIENT_EMAIL', 'GOOGLE_SHEET_URL']
         missing_vars = [var for var in required_vars if not os.environ.get(var)]
         
         if missing_vars:
-            logger.warning(f"⚠️ Google Sheets не налаштовано (відсутні змінні: {', '.join(missing_vars)})")
+            logger.warning(f"⚠️ Google Sheets не налаштовано (немає: {', '.join(missing_vars)})")
             return None, None, None
         
-        scope = ['https://spreadsheets.google.com/feeds',
-                 'https://www.googleapis.com/auth/drive']
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         
         creds_dict = {
             "type": "service_account",
@@ -91,194 +63,39 @@ def init_google_sheets():
             "client_x509_cert_url": os.environ.get('GOOGLE_CERT_URL')
         }
         
-        logger.info("🔄 Підключення до Google Sheets...")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        
-        logger.info(f"🔄 Відкриваю таблицю по URL...")
         spreadsheet = client.open_by_url(GOOGLE_SHEET_URL)
         
-        # Отримуємо або створюємо листи
         try:
             leads_sheet = spreadsheet.worksheet("Leads")
         except gspread.WorksheetNotFound:
             leads_sheet = spreadsheet.add_worksheet("Leads", rows=1000, cols=20)
-            # Додаємо заголовки (додали segment_name)
-            leads_sheet.append_row([
-                "Дата завершення", "Telegram ID", "Username", "Ім'я", "Телефон",
-                "Діти", "Згода супруга", "Майно", "Місце супруга", "Терміновість",
-                "Сегмент", "Назва сегменту", "Вартість", "Строки", "Статус"
-            ])
+            leads_sheet.append_row(["Дата", "ID", "Username", "Ім'я", "Телефон", "Діти", "Конфлікт_Діти", "Згода", "Майно", "Конфлікт_Майно", "Локація", "Терміновість", "Сегмент", "Назва", "Вартість", "Строки", "Статус"])
         
         try:
             analytics_sheet = spreadsheet.worksheet("Analytics")
         except gspread.WorksheetNotFound:
             analytics_sheet = spreadsheet.add_worksheet("Analytics", rows=5000, cols=10)
-            analytics_sheet.append_row([
-                "Timestamp", "Telegram ID", "Username", "Event", "Details"
-            ])
+            analytics_sheet.append_row(["Timestamp", "ID", "Username", "Event", "Details"])
         
         try:
             all_users_sheet = spreadsheet.worksheet("All_Users")
         except gspread.WorksheetNotFound:
             all_users_sheet = spreadsheet.add_worksheet("All_Users", rows=5000, cols=10)
-            all_users_sheet.append_row([
-                "Дата першого контакту", "Telegram ID", "Username", 
-                "First Name", "Last Name", "Завершив квіз", "Статус"
-            ])
-        
-        logger.info(f"✅ Google Sheets підключено успішно")
-        logger.info(f"  📊 Leads: {leads_sheet.title}")
-        logger.info(f"  📈 Analytics: {analytics_sheet.title}")
-        logger.info(f"  👥 All Users: {all_users_sheet.title}")
-        
+            all_users_sheet.append_row(["Дата", "ID", "Username", "First Name", "Last Name", "Завершив", "Статус"])
+            
+        logger.info("✅ Google Sheets підключено успішно")
         return leads_sheet, analytics_sheet, all_users_sheet
         
     except Exception as e:
-        logger.error(f"❌ Помилка підключення до Google Sheets: {type(e).__name__}: {str(e)}")
+        logger.error(f"❌ Помилка Google Sheets: {e}")
         return None, None, None
 
-# Ініціалізуємо sheets
 SHEETS_LEADS, SHEETS_ANALYTICS, SHEETS_ALL_USERS = init_google_sheets()
 
 # =====================================================
-# АНАЛІТИКА - ЛОГУВАННЯ ПОДІЙ
-# =====================================================
-
-async def log_event(telegram_id, username, event, details=""):
-    """Логує кожну подію користувача для аналітики конверсії"""
-    
-    if SHEETS_ANALYTICS is None:
-        return
-    
-    try:
-        row = [
-            datetime.now().isoformat(),
-            str(telegram_id),
-            username or "",
-            event,
-            details
-        ]
-        
-        SHEETS_ANALYTICS.append_row(row)
-        logger.info(f"📊 Analytics: {telegram_id} → {event}")
-        
-    except Exception as e:
-        logger.error(f"❌ Помилка логування події: {e}")
-
-async def save_all_user(telegram_id, username, first_name, last_name):
-    """Зберігає ВСІХ користувачів, хто натиснув /start"""
-    
-    if SHEETS_ALL_USERS is None:
-        return
-    
-    try:
-        # Перевіряємо чи вже є такий користувач
-        existing = SHEETS_ALL_USERS.find(str(telegram_id), in_column=2)
-        if existing:
-            logger.info(f"👥 Користувач {telegram_id} вже в базі")
-            return
-        
-        row = [
-            datetime.now().isoformat(),
-            str(telegram_id),
-            username or "",
-            first_name or "",
-            last_name or "",
-            "Ні",  # Завершив квіз
-            "new"   # Статус
-        ]
-        
-        SHEETS_ALL_USERS.append_row(row)
-        logger.info(f"👥 Новий користувач в базі: {username or telegram_id}")
-        
-    except Exception as e:
-        logger.error(f"❌ Помилка збереження користувача: {e}")
-
-# =====================================================
-# WEB-СЕРВЕР ДЛЯ RENDER (ЩОБ НЕ ЗАСИНАВ)
-# =====================================================
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "✅ Divorce Bot v3.1 is running!", 200
-
-@app.route('/health')
-def health():
-    return {"status": "ok", "bot": "running", "version": "3.1"}, 200
-
-def run_flask():
-    """Запуск Flask (WEB-SERVER для Render)"""
-    # Отримуємо порт з оточення, за замовчуванням 10000
-    port = int(os.environ.get('PORT', 10000))
-    # Важливо: host='0.0.0.0' дозволяє доступ ззовні (для Render)
-    app.run(host='0.0.0.0', port=port)
-
-# =====================================================
-# 4. ЛОГІКА СЕГМЕНТАЦІЇ (ГЛИБОКА)
-# =====================================================
-
-def determine_segment(user_data):
-    """
-    Розумна сегментація (Враховує конфлікти)
-    """
-    has_children = user_data.get('has_children') == 'yes'
-    conflict_children = user_data.get('conflict_children') == 'yes' # НОВЕ: Чи є конфлікт по дітях?
-    
-    property_dispute = user_data.get('property_dispute') == 'yes'
-    conflict_property = user_data.get('conflict_property') == 'yes' # НОВЕ: Чи є конфлікт по майну?
-    
-    spouse_location = user_data.get('spouse_location')
-    urgency = user_data.get('urgency')
-    spouse_consent = user_data.get('spouse_consent')
-
-    # 1. За кордоном (Пріоритет)
-    if spouse_location == 'abroad':
-        return ('D1', '🌍 Міжнародне розлучення (VIP)', '18 000 — 26 000 грн', '4-5 місяців') if urgency == 'high' else ('D2', '🌍 Міжнародне розлучення (Стандарт)', '14 000 — 20 000 грн', '4-6 місяців')
-    
-    # 2. Невідоме місце
-    if spouse_location == 'unknown':
-        return ('E2', '🔍 Розлучення з розшуком', '16 000 — 24 000 грн', '6-9 місяців') if spouse_consent == 'no' else ('E1', '🔍 Розлучення без адреси', '12 000 — 16 000 грн', '5-7 місяців')
-
-    # 3. МАЙНО (Найскладніше)
-    if property_dispute:
-        if conflict_property:
-            # Є конфлікт по майну -> Дорого
-            if has_children:
-                return ('C1', '💼 Комплексний майновий спір', '25 000 — 50 000+ грн', '8-16 місяців')
-            else:
-                return ('C3_WAR', '💰 Судовий поділ майна', '18 000 — 30 000 грн', '6-10 місяців')
-        else:
-            # Майно є, але конфлікту немає -> Дешевше (Оформлення)
-            return ('C2_PEACE', '🤝 Оформлення поділу майна', '10 000 — 16 000 грн', '3-5 місяців')
-
-    # 4. ДІТИ (якщо майно не тригернуло C1/C3)
-    if has_children:
-        if conflict_children:
-            return ('B1', '🛡 Судовий спір за дітей', '14 000 — 22 000 грн', '5-8 місяців')
-        else:
-            return ('B2', '👨‍👩‍👧 Мирне розлучення з дітьми', '8 000 — 12 000 грн', '3-4 місяці')
-
-    # 5. ПРОСТІ (ні дітей, ні майна, є згода або просто суд)
-    if urgency == 'high':
-        return ('A1', '⚡️ Експрес-розлучення', '5 500 — 7 500 грн', '2-3 місяці')
-    
-    return ('A2', '✅ Стандартне розлучення', '4 500 — 6 500 грн', '3-4 місяці')
-
-def get_mini_case(user_data):
-    """Розумний підбір інсайту"""
-    if user_data.get('conflict_children') == 'yes': return random.choice(MINI_CASES['conflict_children'])
-    if user_data.get('has_children') == 'yes': return random.choice(MINI_CASES['peace_children'])
-    
-    if user_data.get('conflict_property') == 'yes': return random.choice(MINI_CASES['conflict_property'])
-    if user_data.get('property_dispute') == 'yes': return random.choice(MINI_CASES['peace_property'])
-    
-    return random.choice(MINI_CASES['default'])
-
-# =====================================================
-# 3. ТЕКСТИ ТА ІНСАЙТИ (ОНОВЛЕНО v3.5)
+# 3. ТЕКСТИ ТА ІНСАЙТИ
 # =====================================================
 
 TEXT_WELCOME = """
@@ -345,53 +162,9 @@ MINI_CASES = {
 }
 
 # Дисклеймер
-DISCLAIMER_TEXT = "\n\n⚠️ <i>Це аналітика ринку 2025. Враховано судовий збір (1211 грн) та реальну практику.</i>"
-
-def get_mini_case(user_data):
-    """Вибирає релевантний детальний мині-кейс"""
-    
-    has_children = user_data.get('has_children') == 'yes'
-    spouse_consent = user_data.get('spouse_consent')
-    property_dispute = user_data.get('property_dispute')
-    spouse_location = user_data.get('spouse_location')
-    
-    # Пріоритет 1: За кордоном
-    if spouse_location == 'abroad':
-        cases = MINI_CASES['abroad']
-        
-    # Пріоритет 2: Невідоме місце
-    elif spouse_location == 'unknown':
-        cases = MINI_CASES['unknown_location']
-        
-    # Пріоритет 3: Є майно
-    elif property_dispute == 'yes':
-        cases = MINI_CASES['yes_property']
-        
-    # Пріоритет 4: Є діти + немає згоди
-    elif has_children and spouse_consent == 'no':
-        cases = MINI_CASES['yes_children_no_consent']
-        
-    # Пріоритет 5: Немає дітей + є згода
-    elif not has_children and spouse_consent == 'yes':
-        cases = MINI_CASES['no_children_yes_consent']
-        
-    # Дефолтний
-    else:
-        cases = MINI_CASES['default']
-    
-    return random.choice(cases)
-
-DISCLAIMER_TEXT = "\n\n⚠️ <i>Це середньоринковий орієнтир. Точна вартість залежить від кваліфікації конкретного адвоката.</i>"
-
-# Дисклеймер
-DISCLAIMER_TEXT = "\n\n⚠️ <i>Розрахунок базується на аналітиці ринку 2025 року. Враховано судовий збір (1211 грн) та реальне завантаження судів.</i>"
-
-# =====================================================
-# РЕЗУЛЬТАТИ (РОЗШИРЕНІ, ЕКСПЕРТНІ)
-# =====================================================
-
 DISCLAIMER_TEXT = "\n\n⚠️ <i>Розрахунок базується на аналітиці ринку 2025. Враховано судовий збір (1211 грн) та реальне завантаження судів.</i>"
 
+# Результати (Поглиблені та Розширені)
 SEGMENT_MESSAGES = {
     # А1/А2 (Прості)
     'A1': """⚡️ <b>Сценарій: Експрес (Без дітей та майна)</b>
@@ -558,44 +331,220 @@ def get_consultation_booked_text(first_name, phone):
 """
 
 # =====================================================
-# ОБРОБНИКИ КОМАНД
+# 4. ЛОГІКА СЕГМЕНТАЦІЇ (НОВА)
+# =====================================================
+
+def determine_segment(user_data):
+    """
+    Розумна сегментація (Враховує конфлікти)
+    """
+    has_children = user_data.get('has_children') == 'yes'
+    conflict_children = user_data.get('conflict_children') == 'yes'
+    property_dispute = user_data.get('property_dispute') == 'yes'
+    conflict_property = user_data.get('conflict_property') == 'yes'
+    spouse_location = user_data.get('spouse_location')
+    urgency = user_data.get('urgency')
+    spouse_consent = user_data.get('spouse_consent')
+
+    # 1. За кордоном
+    if spouse_location == 'abroad':
+        return ('D1', '🌍 Міжнародне розлучення (VIP)', '18 000 — 26 000 грн', '4-5 місяців') if urgency == 'high' else ('D2', '🌍 Міжнародне розлучення (Стандарт)', '14 000 — 20 000 грн', '4-6 місяців')
+    
+    # 2. Невідоме місце
+    if spouse_location == 'unknown':
+        return ('E2', '🔍 Розлучення з розшуком', '16 000 — 24 000 грн', '6-9 місяців') if spouse_consent == 'no' else ('E1', '🔍 Розлучення без адреси', '12 000 — 16 000 грн', '5-7 місяців')
+
+    # 3. МАЙНО
+    if property_dispute:
+        if conflict_property:
+            # Є конфлікт по майну -> Дорого
+            if has_children:
+                return ('C1', '💼 Комплексний майновий спір', '25 000 — 50 000+ грн', '8-16 місяців')
+            else:
+                return ('C3_WAR', '💰 Судовий поділ майна', '18 000 — 30 000 грн', '6-10 місяців')
+        else:
+            # Майно є, але конфлікту немає -> Дешевше (Оформлення)
+            return ('C2_PEACE', '🤝 Оформлення поділу майна', '10 000 — 16 000 грн', '3-5 місяців')
+
+    # 4. ДІТИ
+    if has_children:
+        if conflict_children:
+            return ('B1', '🛡 Судовий спір за дітей', '14 000 — 22 000 грн', '5-8 місяців')
+        else:
+            return ('B2', '👨‍👩‍👧 Мирне розлучення з дітьми', '8 000 — 12 000 грн', '3-4 місяці')
+
+    # 5. ПРОСТІ
+    if urgency == 'high':
+        return ('A1', '⚡️ Експрес-розлучення', '5 500 — 7 500 грн', '2-3 місяці')
+    
+    return ('A2', '✅ Стандартне розлучення', '4 500 — 6 500 грн', '3-4 місяці')
+
+def get_mini_case(user_data):
+    """Розумний підбір інсайту"""
+    if user_data.get('conflict_children') == 'yes': return random.choice(MINI_CASES['conflict_children'])
+    if user_data.get('has_children') == 'yes': return random.choice(MINI_CASES['peace_children'])
+    
+    if user_data.get('conflict_property') == 'yes': return random.choice(MINI_CASES['conflict_property'])
+    if user_data.get('property_dispute') == 'yes': return random.choice(MINI_CASES['peace_property'])
+    
+    return random.choice(MINI_CASES['default'])
+
+async def save_to_sheets(user_data):
+    if SHEETS_LEADS is None: return
+    try:
+        row = [
+            user_data.get('completed_at', ''), str(user_data.get('telegram_id', '')),
+            user_data.get('username', ''), user_data.get('first_name', ''), user_data.get('phone_number', ''),
+            user_data.get('has_children', ''), user_data.get('conflict_children', 'no'),
+            user_data.get('spouse_consent', ''),
+            user_data.get('property_dispute', ''), user_data.get('conflict_property', 'no'),
+            user_data.get('spouse_location', ''),
+            user_data.get('urgency', ''), user_data.get('segment', ''), user_data.get('segment_name', ''),
+            user_data.get('cost_estimate', ''), user_data.get('time_estimate', ''), user_data.get('status', 'new')
+        ]
+        SHEETS_LEADS.append_row(row)
+    except Exception as e: logger.error(f"❌ Sheets Error: {e}")
+
+async def send_to_make(user_data):
+    if not MAKE_WEBHOOK_URL: return 
+    try:
+        user_data['conflict_children'] = user_data.get('conflict_children', 'no')
+        user_data['conflict_property'] = user_data.get('conflict_property', 'no')
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: requests.post(MAKE_WEBHOOK_URL, json=user_data, timeout=5))
+    except: pass
+
+async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
+    if not ADMIN_ID: return
+    text = f"""
+💰 <b>ЗАМОВЛЕННЯ (199 грн)!</b>
+
+👤 <b>{user_data.get('first_name')}</b>
+📱 <code>{user_data.get('phone_number')}</code>
+
+📊 <b>Сегмент: {user_data.get('segment')}</b>
+└ {user_data.get('segment_name')}
+
+📝 <b>Деталі:</b>
+• Діти: {user_data.get('has_children')} (Конфлікт: {user_data.get('conflict_children', 'ні')})
+• Майно: {user_data.get('property_dispute')} (Конфлікт: {user_data.get('conflict_property', 'ні')})
+• Згода: {user_data.get('spouse_consent')}
+• Локація: {user_data.get('spouse_location')}
+
+<i>Дзвони швидше! 🚀</i>
+"""
+    try: await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
+    except: pass
+
+async def send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, segment, segment_name, cost, time):
+    """Відправляє результат + Розширену Дорожню карту (Hook)"""
+    
+    # 1. Основний розрахунок
+    message_template = SEGMENT_MESSAGES.get(segment, SEGMENT_MESSAGES['B2'])
+    result_text = message_template.format(segment_name=segment_name, cost=cost, time=time)
+    await update.message.reply_text(result_text, parse_mode='HTML')
+    
+    await asyncio.sleep(6)
+    
+    # 2. Формуємо Дорожню карту (Користь + "Гачок")
+    roadmap_text = ""
+    
+    if 'D' in segment:
+        roadmap_text = """
+📋 <b>Ваш Чек-лист для старту (Дистанційно):</b>
+
+1. <b>Електронний ключ (КЕП):</b> Перевірте термін дії. Без нього в "Електронний суд" не зайти.
+2. <b>Довіреність:</b> Якщо робите за кордоном, обов'язковий <b>Апостиль</b> та переклад на українську. Без цього документ недійсний.
+3. <b>EasyCon:</b> Зареєструйтесь у системі відеозв'язку суду (потрібна веб-камера та паспорт).
+
+⚠️ <b>Ризик:</b> Суд може вимагати довідку про місце проживання відповідача за кордоном. Це затягує справу на місяці.
+"""
+    elif 'B2' in segment or 'C2' in segment:
+        roadmap_text = """
+📋 <b>Ваш Чек-лист (Мирний шлях):</b>
+
+1. <b>Спільна заява:</b> Спеціальна форма за ст. 109 СК України.
+2. <b>Оригінал свідоцтва про шлюб:</b> Копія не підійде, суд вилучає оригінал.
+3. <b>Нотаріальний договір:</b> Про участь у вихованні дитини.
+
+⚠️ <b>Головна пастка:</b>
+Без нотаріального договору суд ПОВЕРНЕ заяву.
+Нотаріуси вимагають купу довідок для його посвідчення. Ми знаємо, як це спростити.
+"""
+    elif 'C' in segment:
+        roadmap_text = """
+📋 <b>Ваш Чек-лист (Поділ майна):</b>
+
+1. <b>Правовстановлюючі документи:</b> Договори купівлі-продажу, техпаспорти.
+2. <b>Оцінка вартості:</b> Потрібен звіт сертифікованого оцінювача (для розрахунку 1% збору).
+3. <b>Квитанція:</b> Сплата судового збору (до 15 140 грн).
+
+⚠️ <b>Критично важливо:</b>
+Подавайте заяву про <b>АРЕШТ МАЙНА</b> разом із позовом. Інакше поки йде суд, майно може бути продане третім особам.
+"""
+    else:
+        roadmap_text = """
+📋 <b>Ваш Чек-лист (Судовий спір):</b>
+
+1. <b>Позовна заява:</b> З чіткими вимогами (розлучення + аліменти + місце проживання).
+2. <b>Докази доходів:</b> Для розрахунку аліментів.
+3. <b>Акт обстеження житлових умов:</b> Доказ, що дитина живе з вами.
+
+⚠️ <b>Головна пастка:</b>
+Суддя може дати "строк на примирення" (до 6 місяців), якщо ви грамотно не обґрунтуєте, чому шлюб неможливо зберегти.
+"""
+
+    if roadmap_text:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=roadmap_text, parse_mode='HTML')
+
+async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id if update.effective_chat else context.user_data.get('telegram_id')
+    
+    text_part_1 = f"""
+🤝 <b>Чому наш сервіс платний?</b>
+
+Більшість "безкоштовних" сайтів просто продають ваш номер телефону будь-яким адвокатам, аби заробити. Їм байдуже на якість.
+
+<b>Ми працюємо інакше.</b>
+Ми — незалежний сервіс OPORA. Ми беремо символічну плату з ВАС, щоб працювати в ВАШИХ інтересах. Це гарантія нашої об'єктивності.
+"""
+    await context.bot.send_message(chat_id=chat_id, text=text_part_1, parse_mode='HTML')
+    
+    await asyncio.sleep(5)
+    
+    text_part_2 = """
+💎 <b>ПАКЕТ "SMART-СТАРТ"</b>
+
+Ми вручну проаналізуємо вашу ситуацію і надамо комплексне рішення.
+
+✅ <b>Що входить у пакет:</b>
+1. <b>Персональний підбір:</b> 2 перевірених адвокати саме під ваш бюджет.
+2. <b>Перевірка репутації:</b> Ми знаємо їхні реальні виграні справи.
+3. <b>Юридична дорожня карта (PDF):</b> План дій крок за кроком.
+4. <b>100% Гарантія:</b> Якщо ви не спрацюєтесь із жодним із запропонованих адвокатів — ми <b>повернемо гроші</b>.
+
+💰 <b>Вартість послуг сервісу:</b>
+Стандартна ціна: <s>1200 грн</s>.
+🔥 <b>Спеціальна ціна зараз: 199 грн.</b>
+<i>Пропозиція діє, поки ви на цій сторінці.</i>
+
+👇 <b>Натисніть кнопку, щоб замовити "Smart-Старт":</b>
+"""
+    keyboard = [[InlineKeyboardButton("✅ Замовити за 199 грн", callback_data='book_consultation')]]
+    await context.bot.send_message(chat_id=chat_id, text=text_part_2, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+# =====================================================
+# 5. СЦЕНАРІЙ (ОНОВЛЕНИЙ - ГІЛЛЯСТИЙ)
 # =====================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробник команди /start"""
-    
     user = update.effective_user
-
     await remove_quiz_reminder(context, user.id)
-    
-    # Зберігаємо користувача в базу "All Users"
-    await save_all_user(
-        telegram_id=user.id,
-        username=user.username,
-        first_name=user.first_name,
-        last_name=user.last_name
-    )
-    
-    await log_event(user.id, user.username, "/start", "Користувач почав взаємодію")
-    
-    # Ініціалізуємо дані
+    await save_all_user(user.id, user.username, user.first_name, user.last_name)
+    await log_event(user.id, user.username, "/start", "Start")
     context.user_data.clear()
-    context.user_data['telegram_id'] = user.id
-    context.user_data['username'] = user.username or ''
-    context.user_data['started_at'] = datetime.now().isoformat()
-    
-    keyboard = [[InlineKeyboardButton("✅ Так, почнемо!", callback_data='start_quiz')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        TEXT_WELCOME,
-        parse_mode='HTML',
-        reply_markup=reply_markup
-    )
-
-# =====================================================
-# ОБРОБНИКИ КВІЗУ (ПОКРАЩЕНІ З МІКРОКОМІТАМИ)
-# =====================================================
+    context.user_data.update({'telegram_id': user.id, 'username': user.username or '', 'started_at': datetime.now().isoformat()})
+    await update.message.reply_text(TEXT_WELCOME, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Так, почнемо!", callback_data='start_quiz')]]))
 
 # --- ПИТАННЯ 1: ДІТИ ---
 async def question_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -606,32 +555,21 @@ async def question_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(TEXT_Q1, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
     await schedule_quiz_reminder(context, update.effective_user.id, query.message.chat_id)
 
-# --- УТОЧНЕННЯ ПО ДІТЯХ (НОВА ГІЛКА) ---
+# --- УТОЧНЕННЯ ПО ДІТЯХ (ГІЛКА) ---
 async def question_1_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    # Зберігаємо "Діти: Так"
     context.user_data['has_children'] = 'yes'
-    
-    # Запитуємо про конфлікт
-    keyboard = [
-        [InlineKeyboardButton("🤝 Домовилися (Мирно)", callback_data='q1_sub_peace')],
-        [InlineKeyboardButton("⚔️ Є суперечки / Не платить", callback_data='q1_sub_conflict')]
-    ]
+    keyboard = [[InlineKeyboardButton("🤝 Домовилися (Мирно)", callback_data='q1_sub_peace')], [InlineKeyboardButton("⚔️ Є суперечки / Не платить", callback_data='q1_sub_conflict')]]
     await query.edit_message_text(TEXT_Q1_CLARIFY, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- ПИТАННЯ 2: ЗГОДА (Вхід з різних сторін) ---
+# --- ПИТАННЯ 2: ЗГОДА (Вхід) ---
 async def question_2_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, from_prev=False):
-    """Ця функція приймає юзера і з Q1(Ні), і з Q1_Clarify(Так)"""
-    
     if from_prev:
-        # Прийшли з Q1 (Ні) - дітей немає, конфлікту немає
         context.user_data['has_children'] = 'no'
         context.user_data['conflict_children'] = 'no'
         await update.callback_query.edit_message_text(MC_NO + "\n\n" + TEXT_Q2, parse_mode='HTML', reply_markup=q2_keyboard())
     else:
-        # Прийшли з уточнення по дітях - обробляємо відповідь
         query = update.callback_query
         choice = query.data
         if choice == 'q1_sub_peace':
@@ -652,40 +590,28 @@ async def question_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     consent = query.data.replace('q2_', '')
     context.user_data['spouse_consent'] = consent
-    
     if consent == 'yes': m = MC_YES
     elif consent == 'no': m = MC_NO
     else: m = "✅ Зрозуміло."
-    
     keyboard = [[InlineKeyboardButton("🏠 Так, є майно", callback_data='q3_yes')], [InlineKeyboardButton("❌ Немає майна", callback_data='q3_no')]]
     await query.edit_message_text(m + "\n\n" + TEXT_Q3, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- УТОЧНЕННЯ ПО МАЙНУ (НОВА ГІЛКА) ---
+# --- УТОЧНЕННЯ ПО МАЙНУ (ГІЛКА) ---
 async def question_3_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    # Зберігаємо "Майно: Так"
     context.user_data['property_dispute'] = 'yes'
-    
-    # Запитуємо про конфлікт
-    keyboard = [
-        [InlineKeyboardButton("🤝 Вже поділили / Домовилися", callback_data='q3_sub_peace')],
-        [InlineKeyboardButton("⚔️ Є конфлікт / Не ділиться", callback_data='q3_sub_conflict')]
-    ]
+    keyboard = [[InlineKeyboardButton("🤝 Вже поділили / Домовилися", callback_data='q3_sub_peace')], [InlineKeyboardButton("⚔️ Є конфлікт / Не ділиться", callback_data='q3_sub_conflict')]]
     await query.edit_message_text(TEXT_Q3_CLARIFY, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- ПИТАННЯ 4: ЛОКАЦІЯ (Вхід з різних сторін) ---
+# --- ПИТАННЯ 4: ЛОКАЦІЯ (Вхід) ---
 async def question_4_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, from_prev=False):
     if from_prev:
-        # Прийшли з Q3 (Ні)
         context.user_data['property_dispute'] = 'no'
         context.user_data['conflict_property'] = 'no'
         m = MC_NO
-        # Якщо майна немає, інсайт не показуємо (або показуємо дефолтний), тут для швидкості пропускаємо
         await update.callback_query.edit_message_text(m + "\n\n" + TEXT_Q4, parse_mode='HTML', reply_markup=q4_keyboard())
     else:
-        # Прийшли з уточнення по майну
         query = update.callback_query
         if query.data == 'q3_sub_peace':
             context.user_data['conflict_property'] = 'no'
@@ -694,10 +620,9 @@ async def question_4_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, f
             context.user_data['conflict_property'] = 'yes'
             m = MC_CONFLICT
         
-        # ТУТ ВСТАВЛЯЄМО ІНСАЙТ (Це важливо для довіри)
+        # Інсайт замість паузи
         insight = get_mini_case(context.user_data)
         await query.edit_message_text(m, parse_mode='HTML')
-        
         await asyncio.sleep(1)
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
         await context.bot.send_message(chat_id=query.message.chat_id, text=insight, parse_mode='HTML')
@@ -714,686 +639,205 @@ async def question_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     loc = query.data.replace('q4_', '')
     context.user_data['spouse_location'] = loc
-    
     if loc == 'ukraine': m = MC_YES
     elif loc == 'abroad': m = "✅ Зрозуміло, міжнародний елемент."
     else: m = "✅ Зрозуміло."
-    
     keyboard = [[InlineKeyboardButton("⚡️ Терміново", callback_data='q5_high')], [InlineKeyboardButton("⏳ Можу чекати", callback_data='q5_low')]]
     await query.edit_message_text(m + "\n\n" + TEXT_Q5, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
+# --- ФІНАЛ: ТЕЛЕФОН ---
 async def question_6_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Q6: Запит номера телефону (з таймером на 60 с)"""
     query = update.callback_query
     await query.answer()
-    
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    chat_id = query.message.chat_id
-    
-    # Зберігаємо відповідь на Q5
     urgency = query.data.replace('q5_', '')
     context.user_data['urgency'] = urgency
+    user_id = update.effective_user.id
     
-    await log_event(user_id, username, "q5_answered", f"urgency={urgency}")
-
-    # Скасовуємо стандартне нагадування (15 хв)
     await remove_quiz_reminder(context, user_id)
     
-    # Імпортуємо тут, якщо вони не імпортовані нагорі
-    from telegram import KeyboardButton, ReplyKeyboardMarkup
-    
-    # Клавіатура для запиту телефону
-    keyboard = [[KeyboardButton("📱 Поділитися номером", request_contact=True)]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    
-    # 1. Редагуємо попереднє повідомлення (вставляємо основний текст)
-    # Оскільки TEXT_Q6_PHONE тепер безпечний, це має спрацювати
-    await query.edit_message_text(TEXT_Q6_PHONE, parse_mode='HTML')
-    
-    # 2. Відправляємо окреме повідомлення з кнопкою (ReplyKeyboardMarkup)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="👇 Натисніть кнопку нижче:",
-        reply_markup=reply_markup
-    )
+    # Хук з розрахунком
+    segment, segment_name, cost, time = determine_segment(context.user_data)
+    hook_text = f"""
+✅ <b>Попередній розрахунок готовий:</b>
+💰 {cost}
+⏱ {time}
 
-    # 3. Запускаємо СПЕЦІАЛЬНИЙ таймер на 60 секунд
-    context.job_queue.run_once(
-        phone_reminder_callback,
-        60,
-        chat_id=chat_id,
-        user_id=user_id,
-        name=f"phone_reminder_{user_id}" # Додав ім'я для порядку
-    )
-    logger.info(f"⏰ Заплановано нагадування про телефон через 60 с для {user_id}")
+Щоб зафіксувати цей результат та отримати <b>Персональний План Дій</b> — підтвердіть, що ви реальна людина.
+
+👇 <b>Натисніть кнопку "Поділитися номером":</b>
+"""
+    await query.delete_message()
+    await context.bot.send_message(chat_id=query.message.chat_id, text=hook_text, parse_mode='HTML', reply_markup=ReplyKeyboardMarkup([[KeyboardButton("📱 Поділитися номером", request_contact=True)]], one_time_keyboard=True, resize_keyboard=True))
+    
+    context.job_queue.run_once(phone_reminder_callback, 60, chat_id=query.message.chat_id, user_id=user_id, name=f"phone_reminder_{user_id}")
 
 async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT_TYPE, phone_number: str):
-    """Спільна логіка для обробки отриманого номера"""
-    
     user = update.effective_user
     chat_id = update.effective_chat.id
-    
-    first_name = context.user_data.get('first_name') or user.first_name or "Клієнт"
-    last_name = context.user_data.get('last_name') or user.last_name or ""
-    
-    context.user_data['first_name'] = first_name
-    context.user_data['last_name'] = last_name
-    context.user_data['phone_number'] = phone_number
-    context.user_data['completed_at'] = datetime.now().isoformat()
+    context.user_data.update({'first_name': context.user_data.get('first_name') or user.first_name, 'last_name': context.user_data.get('last_name') or user.last_name, 'phone_number': phone_number, 'completed_at': datetime.now().isoformat()})
     
     try:
-        job_name = f"phone_reminder_{user.id}"
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
-    except:
-        pass
+        current_jobs = context.job_queue.get_jobs_by_name(f"phone_reminder_{user.id}")
+        for job in current_jobs: job.schedule_removal()
+    except: pass
 
-    user_id = user.id
-    username = user.username
+    await log_event(user.id, user.username, "phone_shared", phone_number)
     
-    await log_event(user_id, username, "phone_shared", f"{first_name} - {phone_number}")
-    
-    if SHEETS_ALL_USERS:
-        try:
-            cell = SHEETS_ALL_USERS.find(str(user_id), in_column=2)
-            if cell:
-                SHEETS_ALL_USERS.update_cell(cell.row, 6, "Так")
-        except:
-            pass
-    
-    # Сегментація (вже з діапазонами цін)
     segment, segment_name, cost, time = determine_segment(context.user_data)
-    context.user_data['segment'] = segment
-    context.user_data['segment_name'] = segment_name
-    context.user_data['cost_estimate'] = cost
-    context.user_data['time_estimate'] = time
-    context.user_data['status'] = 'new'
+    context.user_data.update({'segment': segment, 'segment_name': segment_name, 'cost_estimate': cost, 'time_estimate': time, 'status': 'new'})
     
-    logger.info(f"📊 Новий лід: {first_name} ({segment} - {segment_name})")
-    
-    # 1. Зберігаємо (Sheets + Make)
     await save_to_sheets(context.user_data)
     await send_to_make(context.user_data)
     
-    # Подяка
-    thanks_text = f"""
-✅ <b>Дякую, {first_name}!</b>
-
-Зараз я сформулюю пропозицію для вашої ситуації...
-"""
-    from telegram import ReplyKeyboardRemove
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=thanks_text,
-        parse_mode='HTML',
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await context.bot.send_message(chat_id=chat_id, text=f"✅ <b>Дякую, {context.user_data['first_name']}!</b>", parse_mode='HTML', reply_markup=ReplyKeyboardMarkup([[]], resize_keyboard=True))
     
-    # Пауза
     await asyncio.sleep(2)
     
-    # Результат (вже з дисклеймером)
+    # 1. Результат + Дорожня карта
     await send_result(update, context, segment, segment_name, cost, time)
     
-    # Пауза (трохи довша, бо тексту більше)
-    await asyncio.sleep(8)
+    await asyncio.sleep(7)
     
-    # Оффер (Tripwire 199)
+    # 2. Оффер 199 грн
     await send_first_offer(update, context)
     
-    # Нагадування про оффер
-    job_name = f"offer_reminder_{user_id}"
-    context.job_queue.run_once(
-        offer_reminder_callback,
-        7200, 
-        chat_id=chat_id,
-        user_id=user_id,
-        name=job_name,
-        data=first_name
-    )
-    logger.info(f"⏰ Заплановано нагадування про оффер для {user_id} через 2 години")
-    
+    context.job_queue.run_once(offer_reminder_callback, 7200, chat_id=chat_id, user_id=user.id, name=f"offer_reminder_{user.id}", data=context.user_data['first_name'])
+
 async def process_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробка контакту через кнопку"""
-    contact = update.message.contact
-    # Викликаємо спільну функцію
-    await finalize_lead_processing(update, context, contact.phone_number)
-
-async def save_to_sheets(user_data):
-    """Зберігає дані ліда в Google Sheets"""
-    
-    if SHEETS_LEADS is None:
-        logger.warning("⚠️ Google Sheets не підключено")
-        return
-    
-    try:
-        row = [
-            user_data.get('completed_at', ''),
-            str(user_data.get('telegram_id', '')),
-            user_data.get('username', ''),
-            user_data.get('first_name', ''),
-            user_data.get('phone_number', ''),
-            user_data.get('has_children', ''),
-            user_data.get('spouse_consent', ''),
-            user_data.get('property_dispute', ''),
-            user_data.get('spouse_location', ''),
-            user_data.get('urgency', ''),
-            user_data.get('segment', ''),
-            user_data.get('segment_name', ''),  # ДОДАНО
-            user_data.get('cost_estimate', ''),
-            user_data.get('time_estimate', ''),
-            user_data.get('status', 'new')
-        ]
-        
-        SHEETS_LEADS.append_row(row)
-        logger.info(f"✅ Лід збережено: {user_data.get('first_name')}")
-        
-    except Exception as e:
-        logger.error(f"❌ Помилка збереження: {e}")
-
-async def send_to_make(user_data):
-    """Відправляє webhook в Make.com (ЯКЩО НАЛАШТОВАНО)"""
-    
-    # 👇 ПРЕДОХРАНИТЕЛЬ: Если ссылки нет, просто выходим
-    if not MAKE_WEBHOOK_URL:
-        return 
-    
-    try:
-        payload = {
-            'event': 'new_lead',
-            'telegram_id': user_data.get('telegram_id'),
-            'first_name': user_data.get('first_name'),
-            'phone_number': user_data.get('phone_number'),
-            'segment': user_data.get('segment'),
-            'segment_name': user_data.get('segment_name'),
-            'cost_estimate': user_data.get('cost_estimate'),
-            'time_estimate': user_data.get('time_estimate'),
-            'completed_at': user_data.get('completed_at')
-        }
-        
-        # Використовуємо run_in_executor, щоб requests не блокував бота
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=5))
-        logger.info("✅ Дані відправлено в Make")
-            
-    except Exception as e:
-        logger.error(f"⚠️ Make Error (не критично): {e}")
-
-async def send_lead_to_admin(context: ContextTypes.DEFAULT_TYPE, user_data):
-    """Відправляє красиву карточку ліда адмінистратору в Telegram"""
-    
-    if not ADMIN_ID:
-        logger.warning("⚠️ ADMIN_ID не встановлено!")
-        return
-
-    text = f"""
-💰 <b>ЗАМОВЛЕННЯ (199 грн)!</b>
-
-👤 <b>{user_data.get('first_name')} {user_data.get('last_name')}</b>
-📱 <code>{user_data.get('phone_number')}</code>
-🔗 @{user_data.get('username', 'немає')}
-
-📊 <b>Сегмент: {user_data.get('segment')}</b>
-└ {user_data.get('segment_name')}
-
-💰 <b>Орієнтир:</b> {user_data.get('cost_estimate')}
-⏱ <b>Строки:</b> {user_data.get('time_estimate')}
-
-📝 <b>Відповіді:</b>
-• Діти: {user_data.get('has_children')}
-• Згода: {user_data.get('spouse_consent')}
-• Майно: {user_data.get('property_dispute')}
-• Локація: {user_data.get('spouse_location')}
-• Терміновість: {user_data.get('urgency')}
-
-<i>Дзвони швидше! 🚀</i>
-"""
-
-    try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
-        logger.info(f"✅ Лід відправлено адміну ({ADMIN_ID})")
-    except Exception as e:
-        logger.error(f"❌ Не вдалося відправити ліда адміну: {e}")
-    try:
-        # Відправляємо повідомлення адміну
-        await context.bot.send_message(chat_id=ADMIN_ID, text=text, parse_mode='HTML')
-        logger.info(f"✅ Лід відправлено адміну ({ADMIN_ID})")
-    except Exception as e:
-        logger.error(f"❌ Не вдалося відправити ліда адміну: {e}")
-
-async def send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, segment, segment_name, cost, time):
-    """Відправляє результат + Розширену Дорожню карту"""
-    
-    # 1. Відправляємо основний розрахунок (Вже з інсайтами)
-    message_template = SEGMENT_MESSAGES.get(segment, SEGMENT_MESSAGES['B2'])
-    result_text = message_template.format(segment_name=segment_name, cost=cost, time=time)
-    await update.message.reply_text(result_text, parse_mode='HTML')
-    
-    # Пауза, щоб людина прочитала цифри та інсайт
-    await asyncio.sleep(6)
-    
-    # 2. Формуємо Дорожню карту (Користь + "Гачок")
-    roadmap_text = ""
-    
-    # Сценарій: ЗА КОРДОНОМ (D1, D2)
-    if 'D' in segment:
-        roadmap_text = """
-📋 <b>Ваш Чек-лист для старту (Дистанційно):</b>
-
-1. <b>Електронний ключ (КЕП):</b> Перевірте термін дії. Без нього в "Електронний суд" не зайти.
-2. <b>Довіреність:</b> Якщо робите за кордоном, обов'язковий <b>Апостиль</b> та переклад на українську. Без цього документ недійсний.
-3. <b>EasyCon:</b> Зареєструйтесь у системі відеозв'язку суду (потрібна веб-камера та паспорт).
-
-⚠️ <b>Ризик:</b> Суд може вимагати довідку про місце проживання відповідача за кордоном. Це затягує справу на місяці.
-"""
-
-    # Сценарій: ДІТИ + ЗГОДА (B2)
-    elif 'B2' in segment:
-        roadmap_text = """
-📋 <b>Ваш Чек-лист (Мирний шлях):</b>
-
-1. <b>Спільна заява:</b> Спеціальна форма за ст. 109 СК України.
-2. <b>Оригінал свідоцтва про шлюб:</b> Копія не підійде, суд вилучає оригінал.
-3. <b>Нотаріальний договір:</b> Про участь у вихованні дитини.
-
-⚠️ <b>Головна пастка:</b>
-Без нотаріального договору суд ПОВЕРНЕ заяву.
-Нотаріуси вимагають купу довідок для його посвідчення. Ми знаємо, як це спростити.
-"""
-
-    # Сценарій: МАЙНО (C1, C2, C3)
-    elif 'C' in segment:
-        roadmap_text = """
-📋 <b>Ваш Чек-лист (Поділ майна):</b>
-
-1. <b>Правовстановлюючі документи:</b> Договори купівлі-продажу, техпаспорти.
-2. <b>Оцінка вартості:</b> Потрібен звіт сертифікованого оцінювача (для розрахунку 1% збору).
-3. <b>Квитанція:</b> Сплата судового збору (до 15 140 грн).
-
-⚠️ <b>Критично важливо:</b>
-Подавайте заяву про <b>АРЕШТ МАЙНА</b> разом із позовом. Інакше поки йде суд, майно може бути продане третім особам.
-"""
-
-    # Сценарій: БЕЗ ДІТЕЙ (A1, A2)
-    elif 'A' in segment:
-        roadmap_text = """
-📋 <b>Ваш Чек-лист (Стандартний):</b>
-
-1. <b>Позовна заява:</b> У 2-х примірниках (для суду і для відповідача).
-2. <b>Оригінал свідоцтва про шлюб:</b> Обов'язково.
-3. <b>Квитанція:</b> Про сплату 1211,20 грн судового збору.
-
-⚠️ <b>Ризик самостійної подачі:</b>
-Помилка у визначенні підсудності (не той районний суд). Справу будуть пересилати 2-3 місяці, ви втратите час.
-"""
-
-    # Сценарій: КОНФЛІКТ / ІНШЕ (B1, E1, E2)
-    else:
-        roadmap_text = """
-📋 <b>Ваш Чек-лист (Судовий спір):</b>
-
-1. <b>Позовна заява:</b> З чіткими вимогами (розлучення + аліменти + місце проживання).
-2. <b>Докази доходів:</b> Для розрахунку аліментів.
-3. <b>Акт обстеження житлових умов:</b> Доказ, що дитина живе з вами.
-
-⚠️ <b>Головна пастка:</b>
-Суддя може дати "строк на примирення" (до 6 місяців), якщо ви грамотно не обґрунтуєте, чому шлюб неможливо зберегти.
-"""
-
-    # Відправляємо карту
-    if roadmap_text:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=roadmap_text,
-            parse_mode='HTML'
-        )
-
-async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Оффер сервісу OPORA: Tripwire (199 грн)"""
-    
-    first_name = context.user_data.get('first_name', 'Клієнт')
-    chat_id = update.effective_chat.id if update.effective_chat else context.user_data.get('telegram_id')
-
-    # ЧАСТИНА 1: Позиціонування (Чому це платно)
-    text_part_1 = f"""
-🤝 <b>{first_name}, чому наш сервіс платний?</b>
-
-Більшість "безкоштовних" сайтів просто продають ваш номер телефону будь-яким адвокатам, аби заробити. Їм байдуже на якість.
-
-<b>Ми працюємо інакше.</b>
-Ми — незалежний сервіс. Ми беремо символічну плату з ВАС, щоб працювати в ВАШИХ інтересах, а не в інтересах юристів. Це гарантія нашої об'єктивності.
-"""
-    await context.bot.send_message(chat_id=chat_id, text=text_part_1, parse_mode='HTML')
-    
-    await asyncio.sleep(6)
-    
-    # ЧАСТИНА 2: Продаж Tripwire (199 грн)
-    text_part_2 = """
-💎 <b>ПАКЕТ "SMART-СТАРТ"</b>
-
-Ми вручну проаналізуємо вашу ситуацію і надамо комплексне рішення.
-
-✅ <b>Що входить у пакет:</b>
-1. <b>Персональний підбір:</b> 2 перевірених адвокати саме під ваш бюджет і тип справи.
-2. <b>Перевірка репутації:</b> Ми знаємо їхні реальні виграні справи, а не "відгуки в інтернеті".
-3. <b>Юридична дорожня карта:</b> Чіткий план дій у PDF (що робити крок за кроком).
-4. <b>100% Гарантія:</b> Якщо ви не спрацюєтесь із жодним із запропонованих адвокатів — ми <b>повернемо гроші</b>.
-
-💰 <b>Вартість послуг сервісу:</b>
-Стандартна ціна: <s>1200 грн</s>.
-🔥 <b>Спеціальна ціна зараз: 199 грн.</b>
-<i>Пропозиція діє, поки ви на цій сторінці.</i>
-
-👇 <b>Натисніть кнопку, щоб замовити "Smart-Старт":</b>
-"""
-    
-    keyboard = [[InlineKeyboardButton("✅ Замовити за 199 грн", callback_data='book_consultation')]]
-    
-    await context.bot.send_message(
-        chat_id=chat_id, 
-        text=text_part_2, 
-        parse_mode='HTML', 
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-# ЗАМІНИ ЦЮ ФУНКЦІЮ (МИ ДОДАЛИ ВІДПРАВКУ АДМІНУ СЮДИ)
-async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробка запису на консультацію (З КОНФЕТІ та бонусом)"""
-    
-    query = update.callback_query
-    await query.answer()
-    
-    user_data = context.user_data
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    first_name = user_data.get('first_name', 'Клієнт')
-
-    # Скасовуємо нагадування про оффер
-    job_name = f"offer_reminder_{user_id}"
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    if current_jobs:
-        for job in current_jobs:
-            job.schedule_removal()
-        logger.info(f"⏰ Видалено нагадування про оффер для {user_id} (юзер записався)")
-    
-    context.user_data['status'] = 'scheduled'
-    
-    logger.info(f"🔥 ГАРЯЧИЙ ЛІД! {first_name} хоче консультацію!")
-    
-    # 👇 НОВЕ: ВІДПРАВЛЯЄМО ЛІДА ТОБІ ТУТ (В МОМЕНТ ЗАПИСУ)
-    await send_lead_to_admin(context, user_data)
-    
-    await log_event(user_id, username, "consultation_booked", "Запис на консультацію!")
-    
-    # Оновлюємо статус в All_Users
-    if SHEETS_ALL_USERS:
-        try:
-            cell = SHEETS_ALL_USERS.find(str(user_id), in_column=2)
-            if cell:
-                SHEETS_ALL_USERS.update_cell(cell.row, 7, "scheduled")
-        except:
-            pass
-    
-    # Webhook в Make (повторно, як подія 'consultation_request')
-    if MAKE_WEBHOOK_URL:
-        try:
-            payload = {
-                'event': 'consultation_request',
-                'telegram_id': user_data.get('telegram_id'),
-                'first_name': first_name,
-                'phone_number': user_data.get('phone_number'),
-                'segment': user_data.get('segment'),
-                'segment_name': user_data.get('segment_name')
-            }
-            # Використовуємо run_in_executor
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, lambda: requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=5))
-        except:
-            pass
-    
-    text = get_consultation_booked_text(first_name, user_data.get('phone_number'))
-    
-    await query.edit_message_text(text, parse_mode='HTML')
-    
-    # Даємо миттєву цінність + ПОЗИТИВНУ ІНСТРУКЦІЮ
-    await asyncio.sleep(60)
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text=f"""
-💡 <b>{first_name}, поки ви очікуєте дзвінок</b> (це 15-30 хв), ось чек-лист '3 головні помилки при розлученні':
-
-<b>1. Емоційні рішення:</b> Починати ділити майно чи підписувати документи на емоціях. 
-<i>(Результат: втрата активів, про які 'забули').</i>
-
-<b>2. Усні домовленості:</b> Вірити обіцянкам про аліменти/майно 'на словах'. 
-<i>(Результат: через рік ніхто нічого не платить, довести неможливо).</i>
-
-<b>3. Затягування:</b> Думати, що 'все само вирішиться', і не фіксувати статус-кво. 
-<i>(Результат: чоловік/дружина може вивести активи або набрати боргів, які стануть спільними).</i>
-
-📝 <b>ЩО ПІДГОТУВАТИ ДО РОЗМОВИ:</b>
-Щоб наша консультація була максимально ефективною, згадайте (або запишіть) орієнтовні дати шлюбу, список спільного майна та вік дітей. Якщо є документи під рукою — чудово, але це не обов'язково для першої розмови.
-""",
-        parse_mode='HTML'
-    )
+    await finalize_lead_processing(update, context, update.message.contact.phone_number)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробка тексту: перевірка на номер телефону або невідома команда"""
     text = update.message.text
-    
-    # Проста перевірка: чи схоже це на номер телефону?
-    # (Шукаємо мінімум 9 цифр, можливі +, -, пробіли, дужки)
-    phone_pattern = re.compile(r'[\+\(\)\s\-\d]{9,20}')
-    
-    # Перевіряємо, чи ми взагалі на етапі очікування телефону (вже відповіли на Q5)
-    urgency = context.user_data.get('urgency')
-    phone_exists = context.user_data.get('phone_number')
-    
-    # Якщо ми на етапі після Q5 і ще немає телефону, і текст схожий на номер
-    if urgency and not phone_exists and phone_pattern.search(text):
-        # Це схоже на номер телефону!
-        # Очищаємо від зайвих символів, залишаємо цифри і плюс
-        clean_phone = re.sub(r'[^\d\+]', '', text)
-        
-        # Якщо довжина адекватна (10-15 цифр)
-        if 9 <= len(clean_phone) <= 15:
-            await finalize_lead_processing(update, context, clean_phone)
-            return
-
-    # Якщо це не номер або ми не чекаємо номер
+    if context.user_data.get('urgency') and not context.user_data.get('phone_number'):
+        phone_match = re.search(r'[\+\(\)\s\-\d]{9,20}', text)
+        if phone_match:
+            clean = re.sub(r'[^\d\+]', '', text)
+            if 9 <= len(clean) <= 15:
+                await finalize_lead_processing(update, context, clean)
+                return
     await update.message.reply_text(TEXT_UNKNOWN_MESSAGE)
 
-# =====================================================
-# НАГАДУВАННЯ (ЗБЕРЕЖЕНО З v3.0)
-# =====================================================
-
-def get_quiz_job_name(user_id: int) -> str:
-    return f"quiz_reminder_{user_id}"
-
-async def schedule_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int):
-    """Планує нагадування про квіз через 15 хвилин"""
-    job_name = get_quiz_job_name(user_id)
+async def book_consultation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    try:
+        jobs = context.job_queue.get_jobs_by_name(f"offer_reminder_{user_id}")
+        for j in jobs: j.schedule_removal()
+    except: pass
     
-    # Видаляємо старі
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    if current_jobs:
-        for job in current_jobs:
-            job.schedule_removal()
-            logger.info(f"⏰ Скасовано старе нагадування {job_name}")
+    context.user_data['status'] = 'scheduled'
+    await send_lead_to_admin(context, context.user_data)
+    await log_event(user_id, update.effective_user.username, "consultation_booked")
+    
+    try: await context.bot.set_message_reaction(chat_id=query.message.chat_id, message_id=query.message.message_id, reaction=[ReactionTypeEmoji(emoji="🎉")])
+    except: pass
+    
+    await query.edit_message_text(get_consultation_booked_text(context.user_data['first_name'], context.user_data['phone_number']), parse_mode='HTML')
+    
+    await asyncio.sleep(1)
+    checklist = "🎁 <b>Ваш бонус:</b>\nОсь короткий гайд 'Топ-10 помилок', який ми обіцяли. Повна версія буде у менеджера."
+    await context.bot.send_message(chat_id=query.message.chat_id, text=checklist, parse_mode='HTML')
 
-    # Ставимо нову
-    context.job_queue.run_once(
-        quiz_reminder_callback,
-        900,  # 15 хвилин
-        chat_id=chat_id,
-        user_id=user_id,
-        name=job_name
-    )
-    logger.info(f"⏰ Заплановано нагадування через 15 хв")
-
-async def remove_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    """Видаляє нагадування про квіз"""
-    job_name = get_quiz_job_name(user_id)
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    if current_jobs:
-        for job in current_jobs:
-            job.schedule_removal()
-        logger.info(f"⏰ Видалено нагадування {job_name}")
+# =====================================================
+# SYSTEM (REMINDERS)
+# =====================================================
 
 async def phone_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
-    """Нагадування про номер телефону"""
     job = context.job
-    user_id = job.user_id
-    
-    user_data = context.application.user_data.get(user_id)
-    phone_exists = user_data and 'phone_number' in user_data
-    
-    if phone_exists:
-        logger.info(f"⏰ Нагадування скасовано (вже є номер)")
-        return
-    
-    logger.info(f"⏰ ВІДПРАВЛЯЮ нагадування про номер для {user_id}")
-    
-    from telegram import KeyboardButton, ReplyKeyboardMarkup
-    keyboard = [[KeyboardButton("📱 Поділитися номером", request_contact=True)]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-
-    await context.bot.send_message(
-        chat_id=job.chat_id,
-        text=TEXT_PHONE_REMINDER,
-        parse_mode='HTML',
-        reply_markup=reply_markup
-    )
+    if context.application.user_data.get(job.user_id, {}).get('phone_number'): return
+    await context.bot.send_message(chat_id=job.chat_id, text=TEXT_PHONE_REMINDER, parse_mode='HTML', reply_markup=ReplyKeyboardMarkup([[KeyboardButton("📱 Поділитися номером", request_contact=True)]], one_time_keyboard=True, resize_keyboard=True))
 
 async def quiz_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
-    """Нагадування про квіз"""
     job = context.job
-    user_id = job.user_id
-    
-    user_data = context.application.user_data.get(user_id, {})
-    if 'phone_number' in user_data:
-        logger.info(f"⏰ Нагадування скасовано (квіз пройдено)")
-        return
-
-    logger.info(f"⏰ ВІДПРАВЛЯЮ нагадування про квіз для {user_id}")
-    await context.bot.send_message(
-        chat_id=job.chat_id,
-        text=TEXT_QUIZ_REMINDER,
-        parse_mode='HTML'
-    )
-
-# =====================================================
-# НОВА ФУНКЦІЯ: НАГАДУВАННЯ ПРО ОФФЕР
-# =====================================================
+    if context.application.user_data.get(job.user_id, {}).get('phone_number'): return
+    await context.bot.send_message(chat_id=job.chat_id, text=TEXT_QUIZ_REMINDER, parse_mode='HTML')
 
 async def offer_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
-    """Нагадування, якщо юзер отримав оффер, але не записався"""
     job = context.job
-    user_id = job.user_id
-    chat_id = job.chat_id
-    first_name = job.data  # Отримуємо ім'я з 'data'
-
-    # Перевіряємо user_data, чи не записався вже юзер
-    # (Ми додамо 'status' в user_data у функції book_consultation)
-    user_data = context.application.user_data.get(user_id, {})
-    status = user_data.get('status', 'new')
-
-    if status == 'scheduled':
-        logger.info(f"⏰ Нагадування про оффер скасовано (статус 'scheduled') для {user_id}")
-        return
-
-    logger.info(f"⏰ ВІДПРАВЛЯЮ нагадування про оффер для {user_id}")
-    
-    # Текст із твого ж IMPLEMENTATION_CHECKLIST.md
-    text = f"""
-{first_name}, я бачу ви ще не записалися на консультацію.
-
-Можливо у вас виникли питання?
-
-Напишіть мені - я можу відповісти прямо зараз, 
-або допоможу записатися на зручний для вас час.
-"""
-    
-    # Відправляємо текст БЕЗ кнопки, щоб стимулювати відповідь
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        parse_mode='HTML'
-    )
-
-# =====================================================
-# ОБРОБНИК ПОМИЛОК (Global Error Handler)
-# =====================================================
+    if context.application.user_data.get(job.user_id, {}).get('status') == 'scheduled': return
+    text = f"{job.data}, я бачу ви ще не замовили підбір...\nМожливо у вас виникли питання?"
+    await context.bot.send_message(chat_id=job.chat_id, text=text)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Логує помилку та повідомляє адміна"""
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-
-    # Якщо є ADMIN_ID, повідомляємо його про збій
+    logger.error(msg="Exception:", exc_info=context.error)
     if ADMIN_ID:
-        try:
-            # Формуємо повідомлення про помилку
-            error_message = f"⚠️ <b>У бота сталася помилка!</b>\n\n<code>{context.error}</code>"
-            
-            # Обрізаємо, якщо занадто довге
-            if len(error_message) > 4000:
-                error_message = error_message[:4000]
-            
-            await context.bot.send_message(chat_id=ADMIN_ID, text=error_message, parse_mode='HTML')
-        except:
-            # Якщо не вдалося відправити повідомлення адміну, просто мовчимо (помилка вже в логах)
-            pass
+        try: await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ Error: {context.error}")
+        except: pass
 
 # =====================================================
-# ГОЛОВНА ФУНКЦІЯ
+# ГОЛОВНА ФУНКЦІЯ (WEBHOOK + FLASK) - STABLE FIX
 # =====================================================
 
-def main():
-    """Запуск бота"""
-    
-    logger.info("=" * 60)
-    logger.info("🤖 ЗАПУСК БОТА v3.5 STABLE")
-    logger.info("=" * 60)
+app = Flask(__name__)
 
-    # 1. Запускаємо Web-сервер в окремому потоці
-    # Це потрібно, щоб Render бачив, що додаток живий
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True # Потік закриється, коли впаде основний
-    flask_thread.start()
-    logger.info("🌐 Flask web-server запущено у фоні")
+@app.route('/')
+def index():
+    return "✅ OPORA Bot is RUNNING!", 200
+
+@app.route('/health')
+def health():
+    return {"status": "ok"}, 200
+
+bot_app = None
+
+async def run_bot():
+    """Запуск бота в режимі Polling (асинхронно)"""
+    global bot_app
+    logger.info("🤖 Ініціалізація бота...")
     
-    # 2. Ініціалізація бота
-    application = Application.builder().token(BOT_TOKEN).build()
+    bot_app = Application.builder().token(BOT_TOKEN).build()
     
     # Реєстрація хендлерів
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(question_1, pattern='^start_quiz$'))
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CallbackQueryHandler(question_1, pattern='^start_quiz$'))
     
-    # Гілка Q1 (Діти)
-    application.add_handler(CallbackQueryHandler(question_1_clarify, pattern='^q1_yes$'))
-    application.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_no$'))
-    application.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_sub_'))
+    # Гілки
+    bot_app.add_handler(CallbackQueryHandler(question_1_clarify, pattern='^q1_yes$'))
+    bot_app.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_no$'))
+    bot_app.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_sub_'))
     
-    # Q2
-    application.add_handler(CallbackQueryHandler(question_3, pattern='^q2_'))
+    bot_app.add_handler(CallbackQueryHandler(question_3, pattern='^q2_'))
+    bot_app.add_handler(CallbackQueryHandler(question_3_clarify, pattern='^q3_yes$'))
+    bot_app.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_no$'))
+    bot_app.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_sub_'))
     
-    # Гілка Q3 (Майно)
-    application.add_handler(CallbackQueryHandler(question_3_clarify, pattern='^q3_yes$'))
-    application.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_no$'))
-    application.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_sub_'))
+    bot_app.add_handler(CallbackQueryHandler(question_5, pattern='^q4_'))
+    bot_app.add_handler(CallbackQueryHandler(question_6_phone, pattern='^q5_'))
+    bot_app.add_handler(CallbackQueryHandler(book_consultation, pattern='^book_consultation$'))
+    bot_app.add_handler(MessageHandler(filters.CONTACT, process_contact))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    # Решта
-    application.add_handler(CallbackQueryHandler(question_5, pattern='^q4_'))
-    application.add_handler(CallbackQueryHandler(question_6_phone, pattern='^q5_'))
-    application.add_handler(CallbackQueryHandler(book_consultation, pattern='^book_consultation$'))
-    application.add_handler(MessageHandler(filters.CONTACT, process_contact))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    bot_app.add_error_handler(error_handler)
     
-    application.add_error_handler(error_handler)
+    logger.info("🚀 Бот запускається...")
     
-    logger.info("🚀 Бот готовий до роботи!")
+    await bot_app.initialize()
+    await bot_app.start()
     
-    # 3. Запуск Polling (Блокуюча операція - тримає скрипт живим)
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Запускаємо long polling
+    await bot_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Тримаємо процес живим
+    while True:
+        await asyncio.sleep(3600)
+
+def start_background_loop(loop):
+    """Запуск асинхронного циклу в окремому потоці"""
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_bot())
+
+if __name__ == '__main__':
+    # 1. Створюємо новий event loop для бота
+    bot_loop = asyncio.new_event_loop()
+    
+    # 2. Запускаємо бота в окремому потоці (щоб не блокувати Flask)
+    t = threading.Thread(target=start_background_loop, args=(bot_loop,), daemon=True)
+    t.start()
+    
+    # 3. Запускаємо Flask (це блокує основний потік і тримає Render живим)
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"🌐 Запуск Flask на порту {port}")
+    
+    # Важливо: use_reloader=False, щоб не було подвійного запуску
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
