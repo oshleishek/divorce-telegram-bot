@@ -295,7 +295,7 @@ MICROCOMMIT_Q1_NO = "✅ Зрозуміло.\n\n"
 TEXT_Q1_CLARIFY = """
 <b>Уточнення по дітях:</b>
 
-Скажіть, чи є у вас спір з чоловіком/дружиною щодо того, з ким житимуть діти, або щодо розміру аліментів?
+Скажіть, чи є у вас спір з чоловіком/дружиною щодо того, з ким житимуть діти, або щодо аліментів?
 
 <i>Це кардинально впливає на складність справи та бюджет.</i>
 """
@@ -346,7 +346,7 @@ TEXT_Q4 = """<b>Питання 4 з 6</b>
 
 # 📝 МІКРОКОМІТИ для Q4
 MICROCOMMIT_Q4_UKRAINE = "✅ Добре, обидва в Україні.\n\n"
-MICROCOMMIT_Q4_ABROAD = "✅ Зрозуміло, є міжнародний елемент. Організуємо все дистанційно.\n\n"
+MICROCOMMIT_Q4_ABROAD = "✅ Зрозуміло, є міжнародний елемент. Це не проблема, все можна органызувати дистанційно.\n\n"
 MICROCOMMIT_Q4_UNKNOWN = "✅ Розумію. Є процедура розлучення без відомої адреси.\n\n"
 
 # 📝 ТЕКСТ: Питання 5 (ПОКРАЩЕНО)
@@ -694,7 +694,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['username'] = user.username or ''
     context.user_data['started_at'] = datetime.now().isoformat()
     
-    keyboard = [[InlineKeyboardButton("✅ Так, почнемо!", callback_data='start_quiz')]]
+    keyboard = [[InlineKeyboardButton("✅ Почнімо!", callback_data='start_quiz')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
@@ -745,7 +745,7 @@ async def question_1_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     keyboard = [
         [InlineKeyboardButton("🤝 Домовилися (Мирно)", callback_data='q1_sub_peace')],
-        [InlineKeyboardButton("⚔️ Є суперечки / Не платить", callback_data='q1_sub_conflict')]
+        [InlineKeyboardButton("⚔️ Є суперечки", callback_data='q1_sub_conflict')]
     ]
     
     await query.edit_message_text(
@@ -1128,7 +1128,8 @@ async def finalize_lead_processing(update: Update, context: ContextTypes.DEFAULT
     thanks_text = f"""
 ✅ <b>Дякую, {first_name}!</b>
 
-Зараз я сформулюю пропозицію для вашої ситуації...
+Ось приблизний розрахунок Вашої ситуації. 
+Слід памʼятити, що це середня вартість по ринку, а не остаточна ціна
 """
     from telegram import ReplyKeyboardRemove
     await context.bot.send_message(
