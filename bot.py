@@ -210,9 +210,11 @@ def health():
     return {"status": "ok", "bot": "running", "version": "3.1"}, 200
 
 def run_flask():
-    """Запуск Flask в окремому потоці"""
+    """Запуск Flask (WEB-SERVER для Render)"""
+    # Отримуємо порт з оточення, за замовчуванням 10000
     port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # Важливо: host='0.0.0.0' дозволяє доступ ззовні (для Render)
+    app.run(host='0.0.0.0', port=port)
 
 # =====================================================
 # 4. ЛОГІКА СЕГМЕНТАЦІЇ (ГЛИБОКА)
@@ -1349,37 +1351,49 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # =====================================================
 
 def main():
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    """Запуск бота"""
+    
+    logger.info("=" * 60)
+    logger.info("🤖 ЗАПУСК БОТА v3.5 STABLE")
+    logger.info("=" * 60)
+
+    # 1. Запускаємо Web-сервер в окремому потоці
+    # Це потрібно, щоб Render бачив, що додаток живий
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True # Потік закриється, коли впаде основний
     flask_thread.start()
+    logger.info("🌐 Flask web-server запущено у фоні")
     
-    app = Application.builder().token(BOT_TOKEN).build()
+    # 2. Ініціалізація бота
+    application = Application.builder().token(BOT_TOKEN).build()
     
-    app.add_handler(CommandHandler("start", start))
-    
-    # Старт квізу
-    app.add_handler(CallbackQueryHandler(question_1, pattern='^start_quiz$'))
+    # Реєстрація хендлерів
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(question_1, pattern='^start_quiz$'))
     
     # Гілка Q1 (Діти)
-    app.add_handler(CallbackQueryHandler(question_1_clarify, pattern='^q1_yes$')) # Якщо натиснув ТАК -> Уточнення
-    app.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_no$'))   # Якщо натиснув НІ -> Q2 (через функцію entry)
-    app.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_sub_'))  # Відповідь на уточнення -> Q2
+    application.add_handler(CallbackQueryHandler(question_1_clarify, pattern='^q1_yes$'))
+    application.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_no$'))
+    application.add_handler(CallbackQueryHandler(question_2_entry, pattern='^q1_sub_'))
     
-    # Q2 (Згода)
-    app.add_handler(CallbackQueryHandler(question_3, pattern='^q2_'))
+    # Q2
+    application.add_handler(CallbackQueryHandler(question_3, pattern='^q2_'))
     
     # Гілка Q3 (Майно)
-    app.add_handler(CallbackQueryHandler(question_3_clarify, pattern='^q3_yes$')) # Якщо майно ТАК -> Уточнення
-    app.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_no$'))    # Якщо майно НІ -> Q4
-    app.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_sub_'))   # Відповідь на уточнення -> Q4
+    application.add_handler(CallbackQueryHandler(question_3_clarify, pattern='^q3_yes$'))
+    application.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_no$'))
+    application.add_handler(CallbackQueryHandler(question_4_entry, pattern='^q3_sub_'))
     
     # Решта
-    app.add_handler(CallbackQueryHandler(question_5, pattern='^q4_'))
-    app.add_handler(CallbackQueryHandler(question_6_phone, pattern='^q5_'))
-    app.add_handler(CallbackQueryHandler(book_consultation, pattern='^book_consultation$'))
-    app.add_handler(MessageHandler(filters.CONTACT, process_contact))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    application.add_handler(CallbackQueryHandler(question_5, pattern='^q4_'))
+    application.add_handler(CallbackQueryHandler(question_6_phone, pattern='^q5_'))
+    application.add_handler(CallbackQueryHandler(book_consultation, pattern='^book_consultation$'))
+    application.add_handler(MessageHandler(filters.CONTACT, process_contact))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    app.add_error_handler(error_handler)
+    application.add_error_handler(error_handler)
     
-    logger.info("🚀 Бот v3.5 DEEP DIAGNOSTIC запущено!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("🚀 Бот готовий до роботи!")
+    
+    # 3. Запуск Polling (Блокуюча операція - тримає скрипт живим)
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
