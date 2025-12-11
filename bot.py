@@ -533,6 +533,58 @@ async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("✅ Замовити за 199 грн", callback_data='book_consultation')]]
     await context.bot.send_message(chat_id=chat_id, text=text_part_2, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
+
+# =====================================================
+# MISSING HELPERS (Вставь это перед def start)
+# =====================================================
+
+async def log_event(telegram_id, username, event, details=""):
+    """Логування подій в Analytics"""
+    if SHEETS_ANALYTICS:
+        try:
+            SHEETS_ANALYTICS.append_row([datetime.now().isoformat(), str(telegram_id), username or "", event, details])
+        except Exception as e:
+            logger.error(f"Analytics Error: {e}")
+
+async def save_all_user(telegram_id, username, first_name, last_name):
+    """Збереження всіх, хто натиснув старт"""
+    if SHEETS_ALL_USERS:
+        try:
+            # Перевірка на дублікат (спрощена, щоб не гальмувати)
+            # В ідеалі краще ловити помилку, але для Google Sheets API find - ок
+            try:
+                existing = SHEETS_ALL_USERS.find(str(telegram_id), in_column=2)
+                if existing: return
+            except: pass
+            
+            SHEETS_ALL_USERS.append_row([
+                datetime.now().isoformat(), str(telegram_id), username or "", 
+                first_name or "", last_name or "", "Ні", "new"
+            ])
+        except Exception as e:
+            logger.error(f"Save User Error: {e}")
+
+def get_quiz_job_name(user_id):
+    return f"quiz_reminder_{user_id}"
+
+async def schedule_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int):
+    """Запуск таймера на 15 хв"""
+    job_name = get_quiz_job_name(user_id)
+    # Видаляємо старий таймер, якщо є
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+    
+    # Ставимо новий
+    context.job_queue.run_once(quiz_reminder_callback, 900, chat_id=chat_id, user_id=user_id, name=job_name)
+
+async def remove_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Скасування таймера"""
+    job_name = get_quiz_job_name(user_id)
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+
 # =====================================================
 # 5. СЦЕНАРІЙ (ОНОВЛЕНИЙ - ГІЛЛЯСТИЙ)
 # =====================================================
