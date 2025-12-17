@@ -1188,6 +1188,7 @@ async def send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, segmen
 async def send_first_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if update.effective_chat else context.user_data.get('telegram_id')
     user_id = context.user_data.get('telegram_id') # Отримуємо ID коректно
+    first_name = context.user_data.get('first_name', 'Клієнт')
     
    # 👇 НОВИЙ ТЕКСТ З М'ЯКИМ ПЕРЕХОДОМ 👇
     text_part_1 = f"""
