@@ -1417,7 +1417,7 @@ def get_quiz_job_name(user_id: int) -> str:
     return f"quiz_reminder_{user_id}"
 
 async def schedule_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int):
-    """Планує нагадування про квіз через 15 хвилин"""
+    """Планує нагадування про квіз через 5 хвилин"""
     job_name = get_quiz_job_name(user_id)
     
     # Видаляємо старі
@@ -1430,12 +1430,12 @@ async def schedule_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: in
     # Ставимо нову
     context.job_queue.run_once(
         quiz_reminder_callback,
-        900,  # 15 хвилин
+        300,  # 5 хвилин
         chat_id=chat_id,
         user_id=user_id,
         name=job_name
     )
-    logger.info(f"⏰ Заплановано нагадування через 15 хв")
+    logger.info(f"⏰ Заплановано нагадування через 5 хв")
 
 async def remove_quiz_reminder(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Видаляє нагадування про квіз"""
@@ -1493,7 +1493,7 @@ async def quiz_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=job.chat_id, text=text, parse_mode='HTML')
 
 async def offer_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
-    """Нагадування через 2 години (те, що на скріншоті)"""
+    """Нагадування через 1 годину"""
     job = context.job
     user_id = job.user_id
     chat_id = job.chat_id
@@ -1560,8 +1560,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             error_message = f"⚠️ <b>У бота сталася помилка!</b>\n\n<code>{context.error}</code>"
             
             # Обрізаємо, якщо занадто довге
-            if len(error_message) > 4000:
-                error_message = error_message[:4000]
+            if len(error_message) > 2000:
+                error_message = error_message[:2000]
             
             await context.bot.send_message(chat_id=ADMIN_ID, text=error_message, parse_mode='HTML')
         except:
